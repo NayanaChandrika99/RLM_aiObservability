@@ -56,6 +56,7 @@ class TraceRCAEngine:
         max_branch_depth: int = 2,
         max_branch_nodes: int = 30,
         use_llm_judgment: bool = False,
+        fallback_on_llm_error: bool = False,
     ) -> None:
         self._inspection_api = inspection_api
         self._model_client = model_client
@@ -63,6 +64,7 @@ class TraceRCAEngine:
         self._max_branch_depth = max_branch_depth
         self._max_branch_nodes = max_branch_nodes
         self._use_llm_judgment = use_llm_judgment
+        self._fallback_on_llm_error = fallback_on_llm_error
         self._prompt_definition: PromptDefinition = _TRACE_RCA_PROMPT_DEFINITION
         self.prompt_template_hash = self._prompt_definition.prompt_template_hash
         self._runtime_signals: dict[str, object] = {
@@ -73,6 +75,7 @@ class TraceRCAEngine:
             "tokens_out": 0,
             "cost_usd": 0.0,
             "model_provider": self.model_provider,
+            "rca_judgment_mode": "deterministic",
         }
         model_provider = str(getattr(self._model_client, "model_provider", "") or "").strip()
         if model_provider:
@@ -412,6 +415,7 @@ class TraceRCAEngine:
         self._runtime_signals["tokens_out"] = int(loop_result.usage.tokens_out)
         self._runtime_signals["cost_usd"] = float(loop_result.usage.cost_usd)
         self._runtime_signals["model_provider"] = model_provider
+        self._runtime_signals["rca_judgment_mode"] = "llm"
 
         payload = loop_result.output
         label_candidate = str(payload.get("primary_label") or "").strip()
@@ -445,6 +449,7 @@ class TraceRCAEngine:
             "tokens_out": 0,
             "cost_usd": 0.0,
             "model_provider": self.model_provider,
+            "rca_judgment_mode": "deterministic",
         }
         inspection_api = self._resolve_inspection_api(request)
         try:
@@ -579,14 +584,20 @@ class TraceRCAEngine:
         )
         remediation = self._remediation_for_label(label)
         if self._use_llm_judgment:
-            label, summary, confidence, remediation, llm_gaps = self._llm_rca_judgment(
-                request=request,
-                hot_candidates=hot_candidates,
-                deterministic_label=label,
-                evidence_refs=deduped,
-            )
-            if llm_gaps:
-                gaps.extend(llm_gaps)
+            try:
+                label, summary, confidence, remediation, llm_gaps = self._llm_rca_judgment(
+                    request=request,
+                    hot_candidates=hot_candidates,
+                    deterministic_label=label,
+                    evidence_refs=deduped,
+                )
+                if llm_gaps:
+                    gaps.extend(llm_gaps)
+            except ModelOutputInvalidError as exc:
+                if not self._fallback_on_llm_error:
+                    raise
+                self._runtime_signals["rca_judgment_mode"] = "deterministic_fallback"
+                gaps.append(f"LLM RCA judgment failed and deterministic fallback was used: {exc}")
         return RCAReport(
             trace_id=request.trace_id,
             primary_label=label,

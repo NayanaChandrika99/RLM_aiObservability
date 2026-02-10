@@ -223,6 +223,21 @@ def test_run_dataset_benchmark_returns_three_capability_comparisons(tmp_path: Pa
     rca = report["capabilities"]["rca"]
     assert rca["baseline"]["accuracy"] <= rca["rlm"]["accuracy"]
     assert rca["delta"]["accuracy"] == rca["rlm"]["accuracy"] - rca["baseline"]["accuracy"]
+    rca_diagnostics = rca["diagnostics"]
+    assert rca_diagnostics["dataset_hash"] == report["dataset"]["dataset_hash"]
+    assert rca_diagnostics["per_label"]
+    assert set(rca_diagnostics["per_label"].keys()) == {
+        "data_schema_mismatch",
+        "instruction_failure",
+        "retrieval_failure",
+        "tool_failure",
+    }
+    for label, row in rca_diagnostics["per_label"].items():
+        assert row["label"] == label
+        assert row["support"] >= 0
+        assert 0.0 <= row["baseline_accuracy"] <= 1.0
+        assert 0.0 <= row["rlm_accuracy"] <= 1.0
+
 
     compliance = report["capabilities"]["compliance"]
     assert compliance["sample_count"] == 4
@@ -246,6 +261,11 @@ def test_run_dataset_benchmark_returns_three_capability_comparisons(tmp_path: Pa
     assert set(gates["thresholds"].keys()) == {"rca", "compliance", "incident"}
     assert set(gates["results"].keys()) == {"rca", "compliance", "incident"}
     assert isinstance(gates["all_passed"], bool)
+    rca_calibration = report["capabilities"]["rca"]["diagnostics"]["threshold_calibration"]
+    assert rca_calibration["threshold"] == gates["thresholds"]["rca"]
+    assert rca_calibration["threshold_miss"] == (rca["delta"]["accuracy"] < gates["thresholds"]["rca"])
+    assert "concentrated_in_label_family" in rca_calibration["miss_concentration"]
+    assert "top_label" in rca_calibration["miss_concentration"]
 
     assert report["run_artifacts"]["rca"]
     assert report["run_artifacts"]["compliance"]

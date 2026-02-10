@@ -38,10 +38,15 @@ def _evidence_weight(evidence: EvidenceRef) -> float:
     return 0.8
 
 
-def _build_primary_evaluation(report: RCAReport, run_id: str) -> TraceEvaluations:
+def _build_primary_evaluation(
+    report: RCAReport,
+    run_id: str,
+    *,
+    annotator_kind: str,
+) -> TraceEvaluations:
     explanation = _dumps(
         {
-            "annotator_kind": "LLM",
+            "annotator_kind": annotator_kind,
             "run_id": run_id,
             "report": report.to_dict(),
         }
@@ -86,14 +91,19 @@ def write_rca_to_phoenix(
     report: RCAReport,
     run_id: str,
     client: Any | None = None,
+    primary_annotator_kind: str = "LLM",
 ) -> dict[str, Any]:
     active_client = client or Client(warn_if_server_not_running=False)
-    primary_eval = _build_primary_evaluation(report, run_id)
+    primary_eval = _build_primary_evaluation(
+        report,
+        run_id,
+        annotator_kind=primary_annotator_kind,
+    )
     evidence_eval = _build_evidence_evaluation(report, run_id)
     active_client.log_evaluations(primary_eval, evidence_eval)
     return {
         "annotation_names": ["rca.primary", "rca.evidence"],
-        "annotator_kinds": ["LLM", "CODE"],
+        "annotator_kinds": [primary_annotator_kind, "CODE"],
         "phoenix_annotation_ids": [],
         "writeback_status": "succeeded",
     }

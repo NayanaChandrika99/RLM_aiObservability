@@ -140,3 +140,25 @@ def test_trace_rca_engine_llm_invalid_output_maps_to_runtime_failure(tmp_path: P
     assert payload["error"]["code"] == "MODEL_OUTPUT_INVALID"
     assert payload["runtime_ref"]["usage"]["tokens_in"] == 222
     assert payload["runtime_ref"]["usage"]["cost_usd"] == pytest.approx(0.1)
+
+
+def test_trace_rca_engine_can_fallback_to_deterministic_on_llm_error() -> None:
+    model_client = _FakeModelClient(
+        outputs=[
+            {"summary": "missing required keys"},
+            {"summary": "still invalid"},
+        ]
+    )
+    engine = TraceRCAEngine(
+        inspection_api=_FakeInspectionAPI(),
+        model_client=model_client,
+        use_llm_judgment=True,
+        fallback_on_llm_error=True,
+    )
+
+    report = engine.run(TraceRCARequest(trace_id="trace-llm", project_name="phase8"))
+    signals = engine.get_runtime_signals()
+
+    assert report.primary_label == "upstream_dependency_failure"
+    assert model_client.calls == 2
+    assert signals["rca_judgment_mode"] == "deterministic_fallback"

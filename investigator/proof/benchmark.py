@@ -278,6 +278,86 @@ def _resolved_delta_thresholds(delta_thresholds: dict[str, float] | None) -> dic
     return resolved
 
 
+def _rca_per_label_diagnostics(
+    *,
+    trace_ids: list[str],
+    expected_labels: dict[str, str],
+    baseline_predictions: dict[str, str],
+    rlm_predictions: dict[str, str],
+) -> dict[str, dict[str, Any]]:
+    labels = sorted({str(expected_labels.get(trace_id) or "") for trace_id in trace_ids if str(expected_labels.get(trace_id) or "")})
+    rows: dict[str, dict[str, Any]] = {}
+    for label in labels:
+        support = 0
+        baseline_correct = 0
+        rlm_correct = 0
+        for trace_id in trace_ids:
+            expected = str(expected_labels.get(trace_id) or "")
+            if expected != label:
+                continue
+            support += 1
+            if str(baseline_predictions.get(trace_id) or "") == expected:
+                baseline_correct += 1
+            if str(rlm_predictions.get(trace_id) or "") == expected:
+                rlm_correct += 1
+        if support > 0:
+            baseline_accuracy = baseline_correct / support
+            rlm_accuracy = rlm_correct / support
+        else:
+            baseline_accuracy = 0.0
+            rlm_accuracy = 0.0
+        rows[label] = {
+            "label": label,
+            "support": support,
+            "baseline_correct": baseline_correct,
+            "rlm_correct": rlm_correct,
+            "baseline_accuracy": baseline_accuracy,
+            "rlm_accuracy": rlm_accuracy,
+            "delta_accuracy": rlm_accuracy - baseline_accuracy,
+        }
+    return rows
+
+
+def _rca_threshold_calibration(
+    *,
+    trace_ids: list[str],
+    expected_labels: dict[str, str],
+    rlm_predictions: dict[str, str],
+    rca_delta: float,
+    threshold: float,
+) -> dict[str, Any]:
+    threshold_miss = rca_delta < threshold
+    misses_by_label: dict[str, int] = {}
+    total_rlm_misses = 0
+    for trace_id in trace_ids:
+        expected = str(expected_labels.get(trace_id) or "")
+        predicted = str(rlm_predictions.get(trace_id) or "")
+        if expected and predicted != expected:
+            total_rlm_misses += 1
+            misses_by_label[expected] = misses_by_label.get(expected, 0) + 1
+    top_label = None
+    top_count = 0
+    if misses_by_label:
+        top_label, top_count = sorted(
+            misses_by_label.items(),
+            key=lambda item: (-item[1], item[0]),
+        )[0]
+    top_share = (top_count / total_rlm_misses) if total_rlm_misses > 0 else 0.0
+    return {
+        "threshold": threshold,
+        "threshold_miss": threshold_miss,
+        "delta_accuracy": rca_delta,
+        "total_rlm_misses": total_rlm_misses,
+        "misses_by_expected_label": misses_by_label,
+        "miss_concentration": {
+            "top_label": top_label,
+            "top_label_count": top_count,
+            "top_label_share": top_share,
+            "concentrated_in_label_family": top_share >= 0.6 and total_rlm_misses > 0,
+        },
+    }
+
+
 def run_dataset_benchmark(
     *,
     spans_parquet_path: str | Path,
@@ -291,6 +371,7 @@ def run_dataset_benchmark(
 ) -> dict[str, Any]:
     parquet_path = Path(spans_parquet_path)
     manifest_file = Path(manifest_path)
+    dataset_hash = _file_sha256(parquet_path)
     api = ParquetInspectionAPI(
         parquet_path=parquet_path,
         project_name=project_name,
@@ -303,10 +384,13 @@ def run_dataset_benchmark(
 
     rca_baseline_correct = 0
     rca_rlm_correct = 0
+    rca_baseline_predictions: dict[str, str] = {}
+    rca_rlm_predictions: dict[str, str] = {}
     rca_run_ids: list[str] = []
     for trace_id in trace_ids:
         spans = api.list_spans(trace_id)
         baseline_label = _baseline_rca_label(spans)
+        rca_baseline_predictions[trace_id] = baseline_label
         if baseline_label == expected_labels[trace_id]:
             rca_baseline_correct += 1
 
@@ -319,7 +403,9 @@ def run_dataset_benchmark(
         rca_run_ids.append(run_record.run_id)
         output_path = Path(run_record.output_ref.artifact_path or "")
         output_payload = json.loads(output_path.read_text(encoding="utf-8"))
-        if str(output_payload.get("primary_label") or "") == expected_labels[trace_id]:
+        rlm_label = str(output_payload.get("primary_label") or "")
+        rca_rlm_predictions[trace_id] = rlm_label
+        if rlm_label == expected_labels[trace_id]:
             rca_rlm_correct += 1
 
     denominator = len(trace_ids) if trace_ids else 1
@@ -426,6 +512,19 @@ def run_dataset_benchmark(
     compliance_delta = compliance_rlm_accuracy - compliance_baseline_accuracy
     incident_delta = rlm_overlap - baseline_overlap
     thresholds = _resolved_delta_thresholds(delta_thresholds)
+    rca_per_label = _rca_per_label_diagnostics(
+        trace_ids=trace_ids,
+        expected_labels=expected_labels,
+        baseline_predictions=rca_baseline_predictions,
+        rlm_predictions=rca_rlm_predictions,
+    )
+    rca_threshold_calibration = _rca_threshold_calibration(
+        trace_ids=trace_ids,
+        expected_labels=expected_labels,
+        rlm_predictions=rca_rlm_predictions,
+        rca_delta=rca_delta,
+        threshold=thresholds["rca"],
+    )
     gate_results = {
         "rca": {
             "metric": "delta.accuracy",
@@ -451,7 +550,7 @@ def run_dataset_benchmark(
         "dataset": {
             "manifest_path": str(manifest_file),
             "spans_parquet_path": str(parquet_path),
-            "dataset_hash": _file_sha256(parquet_path),
+            "dataset_hash": dataset_hash,
             "trace_count": len(trace_ids),
         },
         "capabilities": {
@@ -460,6 +559,11 @@ def run_dataset_benchmark(
                 "baseline": {"accuracy": rca_baseline_accuracy},
                 "rlm": {"accuracy": rca_rlm_accuracy},
                 "delta": {"accuracy": rca_delta},
+                "diagnostics": {
+                    "dataset_hash": dataset_hash,
+                    "per_label": rca_per_label,
+                    "threshold_calibration": rca_threshold_calibration,
+                },
             },
             "compliance": {
                 "sample_count": len(trace_ids),

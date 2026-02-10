@@ -15,10 +15,10 @@ The user-visible result is improved RCA lift in proof runs with auditable eviden
 - [x] (2026-02-10 15:00Z) Reviewed RCA engine, workflow, writeback, and proof benchmark behavior.
 - [x] (2026-02-10 15:00Z) Drafted initial Phase 8C plan.
 - [x] (2026-02-10 15:19Z) Revised Phase 8C with explicit threshold rationale and calibration criteria.
-- [ ] Add LLM prompt+schema path for RCA label selection.
-- [ ] Keep deterministic narrowing as pre-LLM stage.
-- [ ] Update write-back metadata to distinguish LLM vs deterministic fallback.
-- [ ] Add RCA-specific proof and regression tests.
+- [x] (2026-02-10 15:58Z) Added LLM prompt+schema RCA label selection path via shared runtime loop.
+- [x] (2026-02-10 15:58Z) Kept deterministic narrowing and branch inspection as pre-LLM stage.
+- [x] (2026-02-10 15:58Z) Updated write-back metadata to distinguish `LLM` vs deterministic/fallback `CODE` provenance.
+- [x] (2026-02-10 15:58Z) Added RCA proof diagnostics and regression tests for provenance and fallback behavior.
 
 ## Surprises & Discoveries
 
@@ -28,6 +28,8 @@ The user-visible result is improved RCA lift in proof runs with auditable eviden
   Evidence: `_build_primary_evaluation` in `investigator/rca/writeback.py`.
 - Observation: RCA threshold `+0.15` is already encoded in benchmark defaults and should be treated as provisional policy tied to this dataset.
   Evidence: `DEFAULT_DELTA_THRESHOLDS["rca"]` in `investigator/proof/benchmark.py`.
+- Observation: Deterministic RCA runs were being written to Phoenix with `annotator_kind=LLM`, which breaks provenance auditing.
+  Evidence: `tests/unit/test_trace_rca_writeback_phase3.py` now asserts deterministic workflow runs produce `annotator_kinds == ["CODE", "CODE"]`.
 
 ## Decision Log
 
@@ -46,7 +48,7 @@ The user-visible result is improved RCA lift in proof runs with auditable eviden
 
 ## Outcomes & Retrospective
 
-Phase not implemented yet. Success is RCA output generation that can run in LLM mode and deterministic fallback mode, with provenance reflected correctly in write-back and run artifacts.
+Phase implemented for RCA LLM judgment migration, deterministic fallback mode, provenance-correct write-back metadata, and proof-side RCA diagnostics/calibration reporting.
 
 ## References
 

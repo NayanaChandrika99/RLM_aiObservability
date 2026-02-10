@@ -123,3 +123,46 @@ def test_run_trace_rca_workflow_persists_writeback_metadata(tmp_path: Path) -> N
     persisted = json.loads((artifacts_root / "run-rca-2" / "run_record.json").read_text())
     assert persisted["writeback_ref"]["writeback_status"] == "succeeded"
     assert persisted["writeback_ref"]["annotation_names"] == ["rca.primary", "rca.evidence"]
+    assert persisted["writeback_ref"]["annotator_kinds"] == ["CODE", "CODE"]
+
+
+def test_run_trace_rca_workflow_marks_llm_annotator_kind_when_llm_mode_enabled(tmp_path: Path) -> None:
+    artifacts_root = tmp_path / "artifacts" / "investigator_runs"
+    request = TraceRCARequest(trace_id="trace-rca", project_name="phase8")
+    engine = TraceRCAEngine(inspection_api=_SimpleInspectionAPI(), max_hot_spans=1, use_llm_judgment=True)
+    client = _FakePhoenixClient()
+
+    class _FakeModelClient:
+        model_provider = "openai"
+
+        def generate_structured(self, request):  # noqa: ANN001, ANN201
+            del request
+            return type(
+                "StructuredResult",
+                (),
+                {
+                    "output": {
+                        "primary_label": "tool_failure",
+                        "summary": "Model selected tool failure.",
+                        "confidence": 0.73,
+                        "remediation": ["Retry failed tool call with bounded backoff."],
+                        "gaps": [],
+                    },
+                    "raw_text": "{}",
+                    "usage": type("Usage", (), {"tokens_in": 10, "tokens_out": 5, "cost_usd": 0.01})(),
+                },
+            )()
+
+    engine._model_client = _FakeModelClient()
+    report, run_record = run_trace_rca_workflow(
+        request=request,
+        engine=engine,
+        run_id="run-rca-llm-1",
+        artifacts_root=artifacts_root,
+        writeback_client=client,
+    )
+
+    assert report.trace_id == "trace-rca"
+    assert run_record.writeback_ref.annotator_kinds == ["LLM", "CODE"]
+    persisted = json.loads((artifacts_root / "run-rca-llm-1" / "run_record.json").read_text())
+    assert persisted["writeback_ref"]["annotator_kinds"] == ["LLM", "CODE"]
