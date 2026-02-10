@@ -32,6 +32,89 @@
         "required_messages"
       ],
       "severity": "medium"
+    },
+    {
+      "applies_when": {
+        "app_types": [],
+        "data_domains": [],
+        "tools": [
+          "dependency.http"
+        ]
+      },
+      "control_id": "control.upstream.http.review",
+      "controls_version": "controls-v1",
+      "remediation_template": "Confirm upstream dependency health and add resilience for HTTP 503 paths.",
+      "required_evidence": [
+        "required_error_span",
+        "required_span_attributes"
+      ],
+      "severity": "high",
+      "violation_patterns": [
+        "upstream unavailable",
+        "http\\.status_code[^0-9]*503",
+        "503"
+      ]
+    },
+    {
+      "applies_when": {
+        "app_types": [],
+        "data_domains": [],
+        "tools": [
+          "tool.parse"
+        ]
+      },
+      "control_id": "control.schema.mismatch.review",
+      "controls_version": "controls-v1",
+      "remediation_template": "Align parser expectations with tool schema and validate payload boundaries.",
+      "required_evidence": [
+        "required_error_span"
+      ],
+      "severity": "high",
+      "violation_patterns": [
+        "schema mismatch",
+        "tool\\.parse"
+      ]
+    },
+    {
+      "applies_when": {
+        "app_types": [],
+        "data_domains": [],
+        "tools": [
+          "llm.generate"
+        ]
+      },
+      "control_id": "control.output.format.review",
+      "controls_version": "controls-v1",
+      "remediation_template": "Capture format evidence and tighten output constraints before approval.",
+      "required_evidence": [
+        "required_messages",
+        "required_span_attributes"
+      ],
+      "severity": "medium",
+      "violation_patterns": [
+        "format drift",
+        "phase1\\.output\\.format[^A-Za-z0-9]*unexpected"
+      ]
+    },
+    {
+      "applies_when": {
+        "app_types": [],
+        "data_domains": [],
+        "tools": [
+          "retriever.fetch"
+        ]
+      },
+      "control_id": "control.retrieval.quality.review",
+      "controls_version": "controls-v1",
+      "remediation_template": "Collect retrieval chunk evidence and verify relevance for approval.",
+      "required_evidence": [
+        "required_retrieval_chunks",
+        "required_span_attributes"
+      ],
+      "severity": "medium",
+      "violation_patterns": [
+        "phase1\\.retrieval\\.relevance[^0-9]*(0\\.[0-2][0-9]?|0\\.11)"
+      ]
     }
   ]
 }

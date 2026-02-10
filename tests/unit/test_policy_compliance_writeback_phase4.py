@@ -105,7 +105,7 @@ def test_write_compliance_to_phoenix_logs_expected_annotation_rows() -> None:
     result = write_compliance_to_phoenix(report=report, run_id="run-cmp-1", client=client)
 
     assert result["annotation_names"] == ["compliance.overall", "compliance.control.control.alpha.evidence"]
-    assert result["annotator_kinds"] == ["LLM", "CODE"]
+    assert result["annotator_kinds"] == ["CODE"]
     assert len(client.spans.logged_annotations) == 2
 
     root_annotation = next(
@@ -114,6 +114,50 @@ def test_write_compliance_to_phoenix_logs_expected_annotation_rows() -> None:
     payload = json.loads(root_annotation["result"]["explanation"])
     assert payload["run_id"] == "run-cmp-1"
     assert payload["controls_version"] == "controls-v1"
+    assert payload["annotator_kind"] == "CODE"
+
+
+def test_write_compliance_to_phoenix_allows_llm_provenance_override() -> None:
+    report = ComplianceReport(
+        trace_id="trace-cmp",
+        controls_version="controls-v1",
+        controls_evaluated=[
+            ComplianceFinding(
+                controls_version="controls-v1",
+                control_id="control.alpha",
+                pass_fail="fail",
+                severity="high",
+                confidence=0.72,
+                evidence_refs=[
+                    EvidenceRef(
+                        trace_id="trace-cmp",
+                        span_id="root-span",
+                        kind="SPAN",
+                        ref="root-span",
+                        excerpt_hash=hash_excerpt("root"),
+                        ts="2026-02-10T00:00:00Z",
+                    )
+                ],
+                missing_evidence=[],
+                remediation="Address failure.",
+            )
+        ],
+        overall_verdict="non_compliant",
+        overall_confidence=0.72,
+    )
+    client = _FakePhoenixClient()
+    result = write_compliance_to_phoenix(
+        report=report,
+        run_id="run-cmp-llm",
+        client=client,
+        primary_annotator_kind="LLM",
+    )
+
+    assert result["annotator_kinds"] == ["LLM"]
+    root_annotation = next(
+        item for item in client.spans.logged_annotations if item["name"] == "compliance.overall"
+    )
+    payload = json.loads(root_annotation["result"]["explanation"])
     assert payload["annotator_kind"] == "LLM"
 
 
@@ -138,5 +182,7 @@ def test_run_policy_compliance_workflow_persists_writeback_metadata(tmp_path: Pa
     assert report.controls_version == "controls-v1"
     assert run_record.writeback_ref.writeback_status == "succeeded"
     assert run_record.writeback_ref.annotation_names[0] == "compliance.overall"
+    assert run_record.writeback_ref.annotator_kinds == ["CODE"]
     persisted = json.loads((artifacts_root / "run-cmp-2" / "run_record.json").read_text())
     assert persisted["writeback_ref"]["writeback_status"] == "succeeded"
+    assert persisted["writeback_ref"]["annotator_kinds"] == ["CODE"]

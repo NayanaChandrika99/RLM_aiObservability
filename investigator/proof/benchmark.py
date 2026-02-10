@@ -62,6 +62,23 @@ def _load_expected_labels(manifest_path: Path) -> dict[str, str]:
     return labels
 
 
+def _load_fault_profiles(manifest_path: Path) -> dict[str, str]:
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    profiles: dict[str, str] = {}
+    for case in payload.get("cases", []):
+        if not isinstance(case, dict):
+            continue
+        trace_id = str(case.get("trace_id") or "")
+        if not trace_id:
+            continue
+        profile = str(case.get("fault_profile") or "").strip()
+        if not profile:
+            label = str(case.get("expected_label") or "").strip()
+            profile = f"profile_{label}" if label else "profile_unknown"
+        profiles[trace_id] = profile
+    return profiles
+
+
 def _baseline_rca_label(spans: list[dict[str, Any]]) -> str:
     ordered = sorted(
         spans,
@@ -100,8 +117,84 @@ def _expected_compliance_verdict(label: str) -> str:
     if label in {"tool_failure", "upstream_dependency_failure", "data_schema_mismatch"}:
         return "non_compliant"
     if label == "retrieval_failure":
-        return "compliant"
+        return "needs_review"
     return "needs_review"
+
+
+def _compliance_profile_coverage(
+    *,
+    api: ParquetInspectionAPI,
+    trace_ids: list[str],
+    expected_labels: dict[str, str],
+    fault_profiles: dict[str, str],
+    controls_version: str,
+) -> dict[str, Any]:
+    profile_rows: dict[str, dict[str, Any]] = {}
+    for trace_id in trace_ids:
+        if not trace_id:
+            continue
+        spans = api.list_spans(trace_id)
+        app_type = PolicyComplianceEngine._infer_app_type(spans)
+        tools_used = PolicyComplianceEngine._infer_tools_used(spans)
+        controls = api.list_controls(
+            controls_version=controls_version,
+            app_type=app_type,
+            tools_used=tools_used or None,
+            data_domains=None,
+        ) or []
+        control_ids = sorted(
+            {
+                str(control.get("control_id") or "")
+                for control in controls
+                if str(control.get("control_id") or "")
+            }
+        )
+        profile = str(fault_profiles.get(trace_id) or "").strip()
+        if not profile:
+            label = str(expected_labels.get(trace_id) or "").strip()
+            profile = f"profile_{label}" if label else "profile_unknown"
+        row = profile_rows.setdefault(
+            profile,
+            {
+                "profile": profile,
+                "sample_count": 0,
+                "expected_labels": set(),
+                "control_ids": set(),
+                "trace_ids": [],
+            },
+        )
+        row["sample_count"] = int(row["sample_count"]) + 1
+        row["trace_ids"].append(trace_id)
+        label = str(expected_labels.get(trace_id) or "").strip()
+        if label:
+            row["expected_labels"].add(label)
+        row["control_ids"].update(control_ids)
+
+    normalized_profiles: dict[str, dict[str, Any]] = {}
+    uncovered_profiles: list[str] = []
+    for profile in sorted(profile_rows.keys()):
+        row = profile_rows[profile]
+        control_ids = sorted(str(item) for item in row["control_ids"] if str(item))
+        expected_labels_sorted = sorted(
+            str(item) for item in row["expected_labels"] if str(item)
+        )
+        trace_ids_sorted = sorted(str(item) for item in row["trace_ids"] if str(item))
+        covered = bool(control_ids)
+        normalized_profiles[profile] = {
+            "profile": profile,
+            "sample_count": int(row["sample_count"]),
+            "expected_labels": expected_labels_sorted,
+            "control_ids": control_ids,
+            "trace_ids": trace_ids_sorted,
+            "covered": covered,
+        }
+        if not covered:
+            uncovered_profiles.append(profile)
+    return {
+        "profiles": normalized_profiles,
+        "uncovered_profiles": uncovered_profiles,
+        "all_profiles_covered": len(uncovered_profiles) == 0,
+    }
 
 
 def _incident_signature(spans: list[dict[str, Any]]) -> tuple[str, str, str]:
@@ -380,6 +473,7 @@ def run_dataset_benchmark(
     )
     api.attach_manifest_trace_ids(manifest_path=manifest_file)
     expected_labels = _load_expected_labels(manifest_file)
+    fault_profiles = _load_fault_profiles(manifest_file)
     trace_ids = sorted(expected_labels.keys())
 
     rca_baseline_correct = 0
@@ -415,6 +509,13 @@ def run_dataset_benchmark(
     compliance_baseline_correct = 0
     compliance_rlm_correct = 0
     compliance_run_ids: list[str] = []
+    compliance_profile_coverage = _compliance_profile_coverage(
+        api=api,
+        trace_ids=trace_ids,
+        expected_labels=expected_labels,
+        fault_profiles=fault_profiles,
+        controls_version=controls_version,
+    )
     for trace_id in trace_ids:
         spans = api.list_spans(trace_id)
         expected_verdict = _expected_compliance_verdict(expected_labels[trace_id])
@@ -536,7 +637,12 @@ def run_dataset_benchmark(
             "metric": "delta.accuracy",
             "threshold": thresholds["compliance"],
             "actual": compliance_delta,
-            "passed": compliance_delta >= thresholds["compliance"],
+            "coverage_ok": bool(compliance_profile_coverage["all_profiles_covered"]),
+            "uncovered_profiles": list(compliance_profile_coverage["uncovered_profiles"]),
+            "passed": (
+                compliance_delta >= thresholds["compliance"]
+                and bool(compliance_profile_coverage["all_profiles_covered"])
+            ),
         },
         "incident": {
             "metric": "delta.overlap_at_k",
@@ -570,6 +676,10 @@ def run_dataset_benchmark(
                 "baseline": {"accuracy": compliance_baseline_accuracy},
                 "rlm": {"accuracy": compliance_rlm_accuracy},
                 "delta": {"accuracy": compliance_delta},
+                "diagnostics": {
+                    "dataset_hash": dataset_hash,
+                    "profile_coverage": compliance_profile_coverage,
+                },
             },
             "incident": {
                 "sample_count": len(benchmark_trace_ids),

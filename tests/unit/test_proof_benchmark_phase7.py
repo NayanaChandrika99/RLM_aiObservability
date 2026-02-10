@@ -170,6 +170,14 @@ def _write_controls(controls_dir: Path) -> None:
                 "required_evidence": ["required_messages"],
                 "remediation_template": "Collect message evidence for format-drift traces before approval.",
                 "applies_when": {"app_types": [], "tools": ["llm.generate"], "data_domains": []},
+            },
+            {
+                "control_id": "control.retrieval.quality.review",
+                "controls_version": "controls-v1",
+                "severity": "medium",
+                "required_evidence": ["required_retrieval_chunks"],
+                "remediation_template": "Collect retrieval chunk evidence before approval.",
+                "applies_when": {"app_types": [], "tools": ["retriever.fetch"], "data_domains": []},
             }
         ]
     }
@@ -243,6 +251,13 @@ def test_run_dataset_benchmark_returns_three_capability_comparisons(tmp_path: Pa
     assert compliance["sample_count"] == 4
     assert compliance["rlm"]["accuracy"] > compliance["baseline"]["accuracy"]
     assert compliance["delta"]["accuracy"] >= 0.05
+    compliance_diagnostics = compliance["diagnostics"]
+    coverage = compliance_diagnostics["profile_coverage"]
+    assert coverage["all_profiles_covered"] is True
+    assert coverage["uncovered_profiles"] == []
+    assert "profile_data_schema_mismatch" in coverage["profiles"]
+    assert "profile_retrieval_failure" in coverage["profiles"]
+    assert "profile_tool_failure" in coverage["profiles"]
 
     incident = report["capabilities"]["incident"]
     assert 0.0 <= incident["baseline"]["overlap_at_k"] <= 1.0

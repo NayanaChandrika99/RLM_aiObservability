@@ -48,18 +48,31 @@ def _sort_findings(findings: list[ComplianceFinding]) -> list[ComplianceFinding]
     )
 
 
-def _build_span_annotations(report: ComplianceReport, run_id: str) -> list[dict[str, Any]]:
+def _normalize_annotator_kind(kind: str) -> str:
+    normalized = str(kind or "").strip().upper()
+    if normalized in {"LLM", "HUMAN", "CODE"}:
+        return normalized
+    return "CODE"
+
+
+def _build_span_annotations(
+    report: ComplianceReport,
+    run_id: str,
+    *,
+    primary_annotator_kind: str,
+) -> list[dict[str, Any]]:
+    normalized_kind = _normalize_annotator_kind(primary_annotator_kind)
     annotations: list[dict[str, Any]] = []
     root_annotation = {
         "span_id": _root_span_id(report),
         "name": "compliance.overall",
-        "annotator_kind": "LLM",
+        "annotator_kind": normalized_kind,
         "result": {
             "label": report.overall_verdict,
             "score": report.overall_confidence,
             "explanation": _dumps(
                 {
-                    "annotator_kind": "LLM",
+                    "annotator_kind": normalized_kind,
                     "controls_version": report.controls_version,
                     "report": report.to_dict(),
                     "run_id": run_id,
@@ -91,13 +104,13 @@ def _build_span_annotations(report: ComplianceReport, run_id: str) -> list[dict[
                 {
                     "span_id": evidence.span_id,
                     "name": control_name,
-                    "annotator_kind": "CODE",
+                    "annotator_kind": normalized_kind,
                     "result": {
                         "label": _control_label(finding),
                         "score": finding.confidence,
                         "explanation": _dumps(
                             {
-                                "annotator_kind": "CODE",
+                                "annotator_kind": normalized_kind,
                                 "control_id": finding.control_id,
                                 "controls_version": finding.controls_version,
                                 "evidence_ref": asdict(evidence),
@@ -167,9 +180,14 @@ def write_compliance_to_phoenix(
     report: ComplianceReport,
     run_id: str,
     client: Any | None = None,
+    primary_annotator_kind: str = "CODE",
 ) -> dict[str, Any]:
     active_client = client or PhoenixClient()
-    annotations = _build_span_annotations(report, run_id)
+    annotations = _build_span_annotations(
+        report,
+        run_id,
+        primary_annotator_kind=primary_annotator_kind,
+    )
     phoenix_annotation_ids: list[str] = []
 
     try:

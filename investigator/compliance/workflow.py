@@ -22,6 +22,18 @@ def _run_record_path(*, artifacts_root: str | Path, run_id: str) -> Path:
     return Path(artifacts_root) / run_id / "run_record.json"
 
 
+def _primary_annotator_kind(engine: PolicyComplianceEngine) -> str:
+    if not hasattr(engine, "get_runtime_signals"):
+        return "CODE"
+    signals = engine.get_runtime_signals()
+    if not isinstance(signals, dict):
+        return "CODE"
+    mode = str(signals.get("compliance_judgment_mode") or "").strip().lower()
+    if mode == "llm":
+        return "LLM"
+    return "CODE"
+
+
 def run_policy_compliance_workflow(
     *,
     request: PolicyComplianceRequest,
@@ -46,6 +58,7 @@ def run_policy_compliance_workflow(
             report=report,
             run_id=run_record.run_id,
             client=writeback_client,
+            primary_annotator_kind=_primary_annotator_kind(active_engine),
         )
         run_record.writeback_ref.writeback_status = str(
             writeback_result.get("writeback_status") or "succeeded"

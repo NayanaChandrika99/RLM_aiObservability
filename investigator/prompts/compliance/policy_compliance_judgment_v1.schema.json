@@ -1,18 +1,22 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["overall_verdict", "overall_confidence", "summary", "gaps"],
+  "required": ["pass_fail", "confidence", "remediation", "rationale", "gaps"],
   "properties": {
-    "overall_verdict": {
+    "pass_fail": {
       "type": "string",
-      "enum": ["compliant", "non_compliant", "needs_review"]
+      "enum": ["pass", "fail", "not_applicable", "insufficient_evidence"]
     },
-    "overall_confidence": {
+    "confidence": {
       "type": "number",
       "minimum": 0,
       "maximum": 1
     },
-    "summary": {
+    "remediation": {
+      "type": "string",
+      "minLength": 1
+    },
+    "rationale": {
       "type": "string",
       "minLength": 1
     },

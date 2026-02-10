@@ -1,4 +1,4 @@
-# ABOUTME: Implements deterministic Policy-to-Trace Compliance control scoping and finding synthesis.
+# ABOUTME: Implements Policy-to-Trace Compliance control scoping, evidence synthesis, and optional LLM judgment.
 # ABOUTME: Produces controls-version traceable findings with evidence refs over the Inspection API.
 
 from __future__ import annotations
@@ -9,7 +9,15 @@ import re
 from typing import Any
 
 from investigator.inspection_api import PhoenixInspectionAPI
-from investigator.runtime.prompt_registry import get_prompt_definition
+from investigator.runtime.llm_client import (
+    ModelOutputInvalidError,
+    OpenAIModelClient,
+    RuntimeModelClient,
+    StructuredGenerationRequest,
+    StructuredGenerationUsage,
+)
+from investigator.runtime.llm_loop import run_structured_generation_loop
+from investigator.runtime.prompt_registry import PromptDefinition, get_prompt_definition
 from investigator.runtime.contracts import (
     ComplianceFinding,
     ComplianceReport,
@@ -30,12 +38,13 @@ class PolicyComplianceRequest:
 
 _POLICY_COMPLIANCE_PROMPT_ID = "policy_compliance_judgment_v1"
 _POLICY_COMPLIANCE_PROMPT = get_prompt_definition(_POLICY_COMPLIANCE_PROMPT_ID)
+_ALLOWED_CONTROL_VERDICTS = {"pass", "fail", "not_applicable", "insufficient_evidence"}
 
 
 class PolicyComplianceEngine:
     engine_type = "policy_compliance"
     output_contract_name = "ComplianceReport"
-    engine_version = "0.3.0"
+    engine_version = "0.4.0"
     model_provider = "openai"
     model_name = "gpt-5-mini"
     prompt_template_hash = _POLICY_COMPLIANCE_PROMPT.prompt_template_hash
@@ -46,11 +55,41 @@ class PolicyComplianceEngine:
     def __init__(
         self,
         inspection_api: Any | None = None,
+        model_client: RuntimeModelClient | None = None,
         *,
         max_controls: int = 50,
+        max_prompt_records: int = 20,
+        use_llm_judgment: bool = False,
+        fallback_on_llm_error: bool = False,
     ) -> None:
         self._inspection_api = inspection_api
+        self._model_client = model_client
         self._max_controls = max_controls
+        self._max_prompt_records = max_prompt_records
+        self._use_llm_judgment = use_llm_judgment
+        self._fallback_on_llm_error = fallback_on_llm_error
+        self._prompt_definition: PromptDefinition = _POLICY_COMPLIANCE_PROMPT
+        self.prompt_template_hash = self._prompt_definition.prompt_template_hash
+        model_provider = str(getattr(self._model_client, "model_provider", "") or "").strip()
+        if model_provider:
+            self.model_provider = model_provider
+        self._runtime_signals: dict[str, object] = {}
+        self._reset_runtime_signals()
+
+    def _reset_runtime_signals(self) -> None:
+        self._runtime_signals = {
+            "iterations": 1,
+            "depth_reached": 0,
+            "tool_calls": 0,
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "cost_usd": 0.0,
+            "model_provider": self.model_provider,
+            "compliance_judgment_mode": "deterministic",
+        }
+
+    def get_runtime_signals(self) -> dict[str, object]:
+        return dict(self._runtime_signals)
 
     def build_input_ref(self, request: PolicyComplianceRequest) -> InputRef:
         return InputRef(
@@ -146,6 +185,7 @@ class PolicyComplianceEngine:
             "required_tool_io": [],
             "required_retrieval_chunks": [],
             "required_messages": [],
+            "required_span_attributes": [],
         }
         for span in spans:
             status_code = str(span.get("status_code") or "")
@@ -166,6 +206,24 @@ class PolicyComplianceEngine:
             span_id = str(span.get("span_id") or "")
             if not span_id:
                 continue
+            if hasattr(inspection_api, "get_span"):
+                try:
+                    detail = inspection_api.get_span(span_id)
+                    attributes = detail.get("attributes") if isinstance(detail, dict) else {}
+                    attributes_text = self._to_text(attributes)
+                    if attributes_text and attributes_text != "{}":
+                        catalog["required_span_attributes"].append(
+                            EvidenceRef(
+                                trace_id=trace_id,
+                                span_id=span_id,
+                                kind="SPAN",
+                                ref=f"{span_id}:attributes",
+                                excerpt_hash=hash_excerpt(attributes_text),
+                                ts=span.get("start_time"),
+                            )
+                        )
+                except Exception as exc:
+                    gaps.append(f"Failed to load span attributes for span {span_id}: {exc}")
             try:
                 tool_io = inspection_api.get_tool_io(span_id)
                 if tool_io:
@@ -256,6 +314,27 @@ class PolicyComplianceEngine:
                         ),
                     )
                 )
+            if hasattr(inspection_api, "get_span"):
+                try:
+                    detail = inspection_api.get_span(span_id)
+                    attributes = detail.get("attributes") if isinstance(detail, dict) else {}
+                    attributes_text = self._to_text(attributes)
+                    if attributes_text and attributes_text != "{}":
+                        records.append(
+                            (
+                                attributes_text,
+                                EvidenceRef(
+                                    trace_id=trace_id,
+                                    span_id=span_id,
+                                    kind="SPAN",
+                                    ref=f"{span_id}:attributes",
+                                    excerpt_hash=hash_excerpt(attributes_text),
+                                    ts=span.get("start_time"),
+                                ),
+                            )
+                        )
+                except Exception as exc:
+                    gaps.append(f"Failed to load span attributes for span {span_id}: {exc}")
             try:
                 messages = inspection_api.get_messages(span_id) or []
                 for index, message in enumerate(messages):
@@ -391,6 +470,159 @@ class PolicyComplianceEngine:
                 )
         return list(merged.values())
 
+    @staticmethod
+    def _evidence_dict(evidence: EvidenceRef) -> dict[str, Any]:
+        return {
+            "trace_id": evidence.trace_id,
+            "span_id": evidence.span_id,
+            "kind": evidence.kind,
+            "ref": evidence.ref,
+            "excerpt_hash": evidence.excerpt_hash,
+            "ts": evidence.ts,
+        }
+
+    @staticmethod
+    def _control_snapshot(control: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "control_id": str(control.get("control_id") or "control.unknown"),
+            "severity": str(control.get("severity") or "medium").lower(),
+            "required_evidence": [
+                str(item)
+                for item in (control.get("required_evidence") or [])
+                if isinstance(item, str) and str(item)
+            ],
+            "violation_patterns": [
+                str(item)
+                for item in (control.get("violation_patterns") or [])
+                if isinstance(item, str) and str(item)
+            ],
+            "remediation_template": str(control.get("remediation_template") or "").strip(),
+        }
+
+    def _resolve_model_client(self) -> RuntimeModelClient:
+        if self._model_client is None:
+            self._model_client = OpenAIModelClient()
+        return self._model_client
+
+    def _resolve_model_provider(self) -> str:
+        model_provider = str(getattr(self._model_client, "model_provider", "") or "").strip()
+        if model_provider:
+            return model_provider
+        return str(self.model_provider or "openai")
+
+    @classmethod
+    def _deterministic_outcome(
+        cls,
+        *,
+        control: dict[str, Any],
+        has_violation: bool,
+        required_evidence: list[str],
+    ) -> tuple[str, float, str]:
+        remediation_template = str(control.get("remediation_template") or "").strip()
+        if has_violation:
+            pass_fail = "fail"
+            confidence = 0.78
+            remediation = remediation_template or (
+                "Address matched control violations and rerun compliance evaluation."
+            )
+            return pass_fail, confidence, remediation
+        pass_fail = "pass"
+        confidence = 0.72 if required_evidence else 0.62
+        remediation = remediation_template or "No remediation needed."
+        return pass_fail, confidence, remediation
+
+    def _llm_control_judgment(
+        self,
+        *,
+        request: PolicyComplianceRequest,
+        control: dict[str, Any],
+        selected_evidence: list[EvidenceRef],
+        text_records: list[tuple[str, EvidenceRef]],
+        deterministic_pass_fail: str,
+    ) -> tuple[str, float, str, list[str], int, StructuredGenerationUsage, str]:
+        model_client = self._resolve_model_client()
+        model_provider = str(getattr(model_client, "model_provider", self.model_provider) or "openai")
+        prompt_payload = {
+            "trace_id": request.trace_id,
+            "controls_version": request.controls_version,
+            "control": self._control_snapshot(control),
+            "deterministic_hint": {"pass_fail": deterministic_pass_fail},
+            "selected_evidence": [self._evidence_dict(ref) for ref in selected_evidence[:20]],
+            "trace_signals": [
+                {
+                    "text": str(text)[:400],
+                    "evidence_ref": self._evidence_dict(evidence),
+                }
+                for text, evidence in text_records[: self._max_prompt_records]
+            ],
+        }
+        request_payload = StructuredGenerationRequest(
+            model_provider=model_provider,
+            model_name=self.model_name,
+            temperature=self.temperature,
+            system_prompt=self._prompt_definition.prompt_text,
+            user_prompt=json.dumps(prompt_payload, sort_keys=True),
+            response_schema_name=self._prompt_definition.prompt_id,
+            response_schema=self._prompt_definition.response_schema,
+        )
+        loop_result = run_structured_generation_loop(
+            client=model_client,
+            request=request_payload,
+        )
+        payload = loop_result.output
+        pass_fail = str(payload.get("pass_fail") or "").strip()
+        if pass_fail not in _ALLOWED_CONTROL_VERDICTS:
+            raise ModelOutputInvalidError(
+                f"Unsupported compliance pass_fail value for control {control.get('control_id')}: {pass_fail}"
+            )
+        confidence_raw = payload.get("confidence")
+        if isinstance(confidence_raw, (int, float)):
+            confidence = max(0.0, min(1.0, float(confidence_raw)))
+        else:
+            confidence = 0.5
+        remediation = str(payload.get("remediation") or "").strip()
+        if not remediation:
+            remediation = str(control.get("remediation_template") or "").strip()
+        if not remediation:
+            remediation = "Review control evidence and rerun compliance evaluation."
+        gaps_payload = payload.get("gaps")
+        llm_gaps: list[str] = []
+        if isinstance(gaps_payload, list):
+            llm_gaps = [str(item).strip() for item in gaps_payload if str(item).strip()]
+        return (
+            pass_fail,
+            confidence,
+            remediation,
+            llm_gaps,
+            int(loop_result.attempt_count),
+            loop_result.usage,
+            model_provider,
+        )
+
+    def _update_runtime_signals(
+        self,
+        *,
+        usage_total: StructuredGenerationUsage,
+        runtime_tracker: dict[str, Any],
+    ) -> None:
+        llm_used = bool(runtime_tracker.get("llm_used"))
+        fallback_used = bool(runtime_tracker.get("fallback_used"))
+        if fallback_used:
+            mode = "deterministic_fallback"
+        elif llm_used:
+            mode = "llm"
+        else:
+            mode = "deterministic"
+        model_provider = str(runtime_tracker.get("model_provider") or self.model_provider)
+        self._runtime_signals["iterations"] = max(1, int(runtime_tracker.get("attempts") or 1))
+        self._runtime_signals["depth_reached"] = 0
+        self._runtime_signals["tool_calls"] = int(runtime_tracker.get("llm_calls") or 0)
+        self._runtime_signals["tokens_in"] = int(usage_total.tokens_in)
+        self._runtime_signals["tokens_out"] = int(usage_total.tokens_out)
+        self._runtime_signals["cost_usd"] = float(usage_total.cost_usd)
+        self._runtime_signals["model_provider"] = model_provider
+        self._runtime_signals["compliance_judgment_mode"] = mode
+
     def _evaluate_control(
         self,
         inspection_api: Any,
@@ -400,6 +632,8 @@ class PolicyComplianceEngine:
         text_records: list[tuple[str, EvidenceRef]],
         default_evidence: EvidenceRef,
         gaps: list[str],
+        usage_total: StructuredGenerationUsage,
+        runtime_tracker: dict[str, Any],
     ) -> ComplianceFinding:
         control_id = str(control.get("control_id") or "control.unknown")
         severity = str(control.get("severity") or "medium").lower()
@@ -453,27 +687,80 @@ class PolicyComplianceEngine:
             remediation = remediation_template or (
                 f"Collect missing evidence ({missing_text}) via Inspection API and rerun evaluator."
             )
-        else:
-            has_violation, selected_evidence = self._evaluate_violation_rules(
-                control=control,
-                text_records=text_records,
-                error_span_evidence=evidence_catalog.get("required_error_span") or [],
-                selected_evidence=selected_evidence,
-                gaps=gaps,
+            return ComplianceFinding(
+                controls_version=request.controls_version,
+                control_id=control_id,
+                pass_fail=pass_fail,
+                severity=severity,
+                confidence=confidence,
+                evidence_refs=selected_evidence,
+                missing_evidence=missing_evidence,
+                remediation=remediation,
             )
-            if has_violation:
-                pass_fail = "fail"
-                confidence = 0.78
-                remediation = str(control.get("remediation_template") or "").strip() or (
-                    "Address matched control violations and rerun compliance evaluation."
+
+        deterministic_violation, selected_evidence = self._evaluate_violation_rules(
+            control=control,
+            text_records=text_records,
+            error_span_evidence=evidence_catalog.get("required_error_span") or [],
+            selected_evidence=selected_evidence,
+            gaps=gaps,
+        )
+        deterministic_pass_fail, deterministic_confidence, deterministic_remediation = (
+            self._deterministic_outcome(
+                control=control,
+                has_violation=deterministic_violation,
+                required_evidence=required_evidence,
+            )
+        )
+
+        pass_fail = deterministic_pass_fail
+        confidence = deterministic_confidence
+        remediation = deterministic_remediation
+
+        if self._use_llm_judgment:
+            runtime_tracker["llm_calls"] = int(runtime_tracker.get("llm_calls") or 0) + 1
+            try:
+                (
+                    pass_fail,
+                    confidence,
+                    remediation,
+                    llm_gaps,
+                    attempt_count,
+                    usage,
+                    model_provider,
+                ) = self._llm_control_judgment(
+                    request=request,
+                    control=control,
+                    selected_evidence=selected_evidence,
+                    text_records=text_records,
+                    deterministic_pass_fail=deterministic_pass_fail,
                 )
-            else:
-                pass_fail = "pass"
-                confidence = 0.72 if required_evidence else 0.62
-                remediation = (
-                    str(control.get("remediation_template") or "").strip()
-                    or "No remediation needed."
+                runtime_tracker["attempts"] = int(runtime_tracker.get("attempts") or 0) + max(
+                    1, int(attempt_count)
                 )
+                usage_total.add(usage)
+                runtime_tracker["llm_used"] = True
+                runtime_tracker["model_provider"] = model_provider
+                if llm_gaps:
+                    gaps.extend(llm_gaps)
+            except ModelOutputInvalidError as exc:
+                runtime_tracker["attempts"] = int(runtime_tracker.get("attempts") or 0) + int(
+                    getattr(exc, "attempt_count", 1) or 1
+                )
+                usage = getattr(exc, "usage", None)
+                if isinstance(usage, StructuredGenerationUsage):
+                    usage_total.add(usage)
+                runtime_tracker["model_provider"] = self._resolve_model_provider()
+                if not self._fallback_on_llm_error:
+                    raise
+                runtime_tracker["fallback_used"] = True
+                gaps.append(
+                    f"LLM compliance judgment failed and deterministic fallback was used for {control_id}: {exc}"
+                )
+                pass_fail = deterministic_pass_fail
+                confidence = deterministic_confidence
+                remediation = deterministic_remediation
+
         return ComplianceFinding(
             controls_version=request.controls_version,
             control_id=control_id,
@@ -486,96 +773,115 @@ class PolicyComplianceEngine:
         )
 
     def run(self, request: PolicyComplianceRequest) -> ComplianceReport:
+        self._reset_runtime_signals()
+        usage_total = StructuredGenerationUsage()
+        runtime_tracker: dict[str, Any] = {
+            "attempts": 0,
+            "llm_calls": 0,
+            "llm_used": False,
+            "fallback_used": False,
+            "model_provider": self.model_provider,
+        }
+
         inspection_api = self._resolve_inspection_api(request)
         gaps: list[str] = []
-        try:
-            spans = inspection_api.list_spans(request.trace_id) or []
-        except Exception as exc:
-            spans = []
-            gaps.append(f"Failed to list spans for compliance evaluation: {exc}")
-
-        app_type = self._infer_app_type(spans)
-        tools_used = self._infer_tools_used(spans)
-        try:
-            scoped_controls = inspection_api.list_controls(
-                controls_version=request.controls_version,
-                app_type=app_type,
-                tools_used=tools_used or None,
-                data_domains=None,
-            ) or []
-        except Exception as exc:
-            scoped_controls = []
-            gaps.append(
-                f"Failed to load controls for version {request.controls_version}: {exc}"
-            )
-
-        merged_controls = self._merge_override_controls(
-            inspection_api,
-            scoped_controls,
-            request,
-            gaps,
-        )
-        ordered_controls = self._sort_controls(merged_controls)[: self._max_controls]
-        default_evidence = self._root_evidence_ref(request.trace_id, spans)
-        evidence_catalog = self._build_evidence_catalog(
-            inspection_api,
-            request.trace_id,
-            spans,
-            gaps,
-        )
-        text_records = self._build_text_evidence_records(
-            inspection_api,
-            request.trace_id,
-            spans,
-            gaps,
-        )
-
         findings: list[ComplianceFinding] = []
-        for control in ordered_controls:
-            findings.append(
-                self._evaluate_control(
-                    inspection_api=inspection_api,
-                    control=control,
-                    request=request,
-                    evidence_catalog=evidence_catalog,
-                    text_records=text_records,
-                    default_evidence=default_evidence,
-                    gaps=gaps,
-                )
-            )
 
-        if not findings:
-            findings.append(
-                ComplianceFinding(
+        try:
+            try:
+                spans = inspection_api.list_spans(request.trace_id) or []
+            except Exception as exc:
+                spans = []
+                gaps.append(f"Failed to list spans for compliance evaluation: {exc}")
+
+            app_type = self._infer_app_type(spans)
+            tools_used = self._infer_tools_used(spans)
+            try:
+                scoped_controls = inspection_api.list_controls(
                     controls_version=request.controls_version,
-                    control_id="control.no_applicable_controls",
-                    pass_fail="not_applicable",
-                    severity="low",
-                    confidence=0.4,
-                    evidence_refs=[default_evidence],
-                    missing_evidence=[],
-                    remediation="No scoped controls matched this trace and controls version.",
+                    app_type=app_type,
+                    tools_used=tools_used or None,
+                    data_domains=None,
+                ) or []
+            except Exception as exc:
+                scoped_controls = []
+                gaps.append(
+                    f"Failed to load controls for version {request.controls_version}: {exc}"
                 )
+
+            merged_controls = self._merge_override_controls(
+                inspection_api,
+                scoped_controls,
+                request,
+                gaps,
             )
-            gaps.append(
-                f"No controls were scoped for controls_version={request.controls_version}."
+            ordered_controls = self._sort_controls(merged_controls)[: self._max_controls]
+            default_evidence = self._root_evidence_ref(request.trace_id, spans)
+            evidence_catalog = self._build_evidence_catalog(
+                inspection_api,
+                request.trace_id,
+                spans,
+                gaps,
+            )
+            text_records = self._build_text_evidence_records(
+                inspection_api,
+                request.trace_id,
+                spans,
+                gaps,
             )
 
-        if any(finding.pass_fail == "fail" for finding in findings):
-            overall_verdict = "non_compliant"
-        elif any(finding.pass_fail == "insufficient_evidence" for finding in findings):
-            overall_verdict = "needs_review"
-        elif all(finding.pass_fail == "not_applicable" for finding in findings):
-            overall_verdict = "needs_review"
-        else:
-            overall_verdict = "compliant"
-        overall_confidence = sum(finding.confidence for finding in findings) / len(findings)
+            for control in ordered_controls:
+                findings.append(
+                    self._evaluate_control(
+                        inspection_api=inspection_api,
+                        control=control,
+                        request=request,
+                        evidence_catalog=evidence_catalog,
+                        text_records=text_records,
+                        default_evidence=default_evidence,
+                        gaps=gaps,
+                        usage_total=usage_total,
+                        runtime_tracker=runtime_tracker,
+                    )
+                )
 
-        return ComplianceReport(
-            trace_id=request.trace_id,
-            controls_version=request.controls_version,
-            controls_evaluated=findings,
-            overall_verdict=overall_verdict,
-            overall_confidence=overall_confidence,
-            gaps=gaps,
-        )
+            if not findings:
+                findings.append(
+                    ComplianceFinding(
+                        controls_version=request.controls_version,
+                        control_id="control.no_applicable_controls",
+                        pass_fail="not_applicable",
+                        severity="low",
+                        confidence=0.4,
+                        evidence_refs=[default_evidence],
+                        missing_evidence=[],
+                        remediation="No scoped controls matched this trace and controls version.",
+                    )
+                )
+                gaps.append(
+                    f"No controls were scoped for controls_version={request.controls_version}."
+                )
+
+            if any(finding.pass_fail == "fail" for finding in findings):
+                overall_verdict = "non_compliant"
+            elif any(finding.pass_fail == "insufficient_evidence" for finding in findings):
+                overall_verdict = "needs_review"
+            elif all(finding.pass_fail == "not_applicable" for finding in findings):
+                overall_verdict = "needs_review"
+            else:
+                overall_verdict = "compliant"
+            overall_confidence = sum(finding.confidence for finding in findings) / len(findings)
+
+            return ComplianceReport(
+                trace_id=request.trace_id,
+                controls_version=request.controls_version,
+                controls_evaluated=findings,
+                overall_verdict=overall_verdict,
+                overall_confidence=overall_confidence,
+                gaps=gaps,
+            )
+        finally:
+            self._update_runtime_signals(
+                usage_total=usage_total,
+                runtime_tracker=runtime_tracker,
+            )

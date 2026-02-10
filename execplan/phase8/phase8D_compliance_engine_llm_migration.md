@@ -15,10 +15,10 @@ After completion, Nainy can rerun proof and observe measurable compliance lift w
 - [x] (2026-02-10 15:00Z) Reviewed compliance engine, controls library, write-back, and benchmark expectations.
 - [x] (2026-02-10 15:00Z) Drafted initial Phase 8D plan.
 - [x] (2026-02-10 15:22Z) Revised Phase 8D with dataset-grounded control enrichment scope and explicit manifest-driven coverage checks.
-- [ ] Add LLM per-control verdict path using shared runtime loop.
-- [ ] Enrich controls library using observable seeded dataset signals.
-- [ ] Align benchmark compliance expectations with control semantics and evidence rules.
-- [ ] Pass compliance proof gate (`delta.accuracy >= +0.05`) on frozen dataset.
+- [x] (2026-02-10 16:20Z) Added shared-runtime LLM per-control verdict path with deterministic missing-evidence precedence and fallback mode.
+- [x] (2026-02-10 16:20Z) Enriched controls library with additive upstream/schema/format/retrieval controls grounded in seeded trace signals.
+- [x] (2026-02-10 16:20Z) Added manifest profile-to-control coverage diagnostics and aligned benchmark compliance expectation semantics.
+- [x] (2026-02-10 16:20Z) Passed frozen seeded benchmark compliance gate (`delta.accuracy=+0.3333`, threshold `+0.05`).
 
 ## Surprises & Discoveries
 
@@ -30,6 +30,10 @@ After completion, Nainy can rerun proof and observe measurable compliance lift w
   Evidence: `datasets/seeded_failures/manifest.json` label counts: tool 9, retrieval 8, data_schema 7, upstream 4, instruction 2.
 - Observation: Seeded trace generator emits specific phase attributes that can support deterministic evidence extraction.
   Evidence: `apps/demo_agent/phase1_seeded_failures.py` sets `phase1.step`, `phase1.retrieval.relevance`, `phase1.output.format`, and `http.status_code`.
+- Observation: Provenance was overstated as `LLM` in compliance root annotation even for deterministic judgments.
+  Evidence: `investigator/compliance/writeback.py` root annotation kind was hard-coded to `LLM`.
+- Observation: Retrieval profile benchmark semantics needed explicit `needs_review` handling once retrieval evidence controls were added.
+  Evidence: `_expected_compliance_verdict` alignment and benchmark diagnostics in `investigator/proof/benchmark.py`.
 
 ## Decision Log
 
@@ -48,7 +52,11 @@ After completion, Nainy can rerun proof and observe measurable compliance lift w
 
 ## Outcomes & Retrospective
 
-Phase not implemented yet. Success is compliance LLM path plus dataset-grounded control enrichment producing >= +0.05 lift while preserving per-control evidence contracts and write-back traceability.
+Implemented. Compliance now supports per-control LLM judgment through the shared runtime loop with deterministic missing-evidence precedence and deterministic fallback on model-output validation failure.
+
+Controls were enriched additively for upstream/schema/format/retrieval signal families while preserving controls versioning and evidence requirements.
+
+Benchmark now reports profile-to-control coverage diagnostics and enforces coverage as part of compliance gate pass criteria. Frozen seeded benchmark result passed with `delta.accuracy=+0.3333` and no uncovered profiles.
 
 ## References
 

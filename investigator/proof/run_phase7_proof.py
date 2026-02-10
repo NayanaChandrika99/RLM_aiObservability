@@ -99,6 +99,51 @@ def _ensure_default_controls(controls_dir: Path, controls_version: str) -> Path:
                     "data_domains": [],
                 },
             },
+            {
+                "control_id": "control.upstream.http.review",
+                "controls_version": controls_version,
+                "severity": "high",
+                "required_evidence": ["required_error_span", "required_span_attributes"],
+                "violation_patterns": [
+                    "upstream unavailable",
+                    "http\\.status_code[^0-9]*503",
+                    "503",
+                ],
+                "remediation_template": "Confirm upstream dependency health and add resilience for HTTP 503 paths.",
+                "applies_when": {"app_types": [], "tools": ["dependency.http"], "data_domains": []},
+            },
+            {
+                "control_id": "control.schema.mismatch.review",
+                "controls_version": controls_version,
+                "severity": "high",
+                "required_evidence": ["required_error_span"],
+                "violation_patterns": ["schema mismatch", "tool\\.parse"],
+                "remediation_template": "Align parser expectations with tool schema and validate payload boundaries.",
+                "applies_when": {"app_types": [], "tools": ["tool.parse"], "data_domains": []},
+            },
+            {
+                "control_id": "control.output.format.review",
+                "controls_version": controls_version,
+                "severity": "medium",
+                "required_evidence": ["required_messages", "required_span_attributes"],
+                "violation_patterns": [
+                    "format drift",
+                    "phase1\\.output\\.format[^A-Za-z0-9]*unexpected",
+                ],
+                "remediation_template": "Capture format evidence and tighten output constraints before approval.",
+                "applies_when": {"app_types": [], "tools": ["llm.generate"], "data_domains": []},
+            },
+            {
+                "control_id": "control.retrieval.quality.review",
+                "controls_version": controls_version,
+                "severity": "medium",
+                "required_evidence": ["required_retrieval_chunks", "required_span_attributes"],
+                "violation_patterns": [
+                    "phase1\\.retrieval\\.relevance[^0-9]*(0\\.[0-2][0-9]?|0\\.11)",
+                ],
+                "remediation_template": "Collect retrieval chunk evidence and verify relevance for approval.",
+                "applies_when": {"app_types": [], "tools": ["retriever.fetch"], "data_domains": []},
+            },
         ]
     }
     _ensure_json(controls_file, payload)
