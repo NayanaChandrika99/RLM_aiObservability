@@ -1,0 +1,111 @@
+{
+  "confidence": 0.5,
+  "gaps": [],
+  "hypotheses": [
+    {
+      "confidence": 0.57,
+      "evidence_refs": [
+        {
+          "excerpt_hash": "5a2330602b913fbd012cae7bdcd886f422f3b284d89530ee2417d8ae3ec5c6b2",
+          "kind": "SPAN",
+          "ref": "root-span",
+          "span_id": "root-span",
+          "trace_id": "trace-3",
+          "ts": "2026-02-10T00:00:00Z"
+        }
+      ],
+      "rank": 1,
+      "statement": "High-latency representative traces dominate the incident window with limited explicit error spans."
+    }
+  ],
+  "impacted_components": [
+    "unknown_service"
+  ],
+  "incident_summary": "Selected 1 representative traces using deterministic error/latency/cluster buckets; config diff correlated.",
+  "recommended_actions": [
+    {
+      "action": "Inspect representative traces in bucket order and validate the latest config diff against failing spans.",
+      "priority": "P1",
+      "type": "follow_up_fix"
+    }
+  ],
+  "representative_traces": [
+    {
+      "evidence_refs": [
+        {
+          "excerpt_hash": "5a2330602b913fbd012cae7bdcd886f422f3b284d89530ee2417d8ae3ec5c6b2",
+          "kind": "SPAN",
+          "ref": "root-span",
+          "span_id": "root-span",
+          "trace_id": "trace-3",
+          "ts": "2026-02-10T00:00:00Z"
+        }
+      ],
+      "trace_id": "trace-3",
+      "why_selected": "latency_bucket(score=0.00, error_spans=0, latency_ms=0.00)"
+    }
+  ],
+  "schema_version": "1.0.0",
+  "suspected_change": {
+    "change_ref": "phase7-candidate",
+    "change_type": "config",
+    "diff_ref": "configdiff:de0d766875c6c8029f0bfa7c749d5ae41777d783d8efc67acefdb72939774359",
+    "evidence_refs": [
+      {
+        "excerpt_hash": "5a2330602b913fbd012cae7bdcd886f422f3b284d89530ee2417d8ae3ec5c6b2",
+        "kind": "SPAN",
+        "ref": "root-span",
+        "span_id": "root-span",
+        "trace_id": "trace-3",
+        "ts": "2026-02-10T00:00:00Z"
+      },
+      {
+        "excerpt_hash": "c326259d3954918b7c7bd2d151cd32cca9091de1442c3f8a15a1a2e54a942abd",
+        "kind": "CONFIG_DIFF",
+        "ref": "configdiff:de0d766875c6c8029f0bfa7c749d5ae41777d783d8efc67acefdb72939774359",
+        "span_id": "root-span",
+        "trace_id": "trace-3",
+        "ts": "2026-02-10T01:00:00Z"
+      }
+    ],
+    "summary": "Correlated config diff phase7-baseline->phase7-candidate: 1 changed file(s); paths=runtime.env"
+  },
+  "timeline": [
+    {
+      "event": "Incident window opened for project phoenix-rlm; selected 1 representative traces.",
+      "evidence_refs": [
+        {
+          "excerpt_hash": "5a2330602b913fbd012cae7bdcd886f422f3b284d89530ee2417d8ae3ec5c6b2",
+          "kind": "SPAN",
+          "ref": "root-span",
+          "span_id": "root-span",
+          "trace_id": "trace-3",
+          "ts": "2026-02-10T00:00:00Z"
+        }
+      ],
+      "timestamp": "2026-02-10T00:00:00Z"
+    },
+    {
+      "event": "Correlated config diff phase7-baseline->phase7-candidate with 1 changed path(s).",
+      "evidence_refs": [
+        {
+          "excerpt_hash": "5a2330602b913fbd012cae7bdcd886f422f3b284d89530ee2417d8ae3ec5c6b2",
+          "kind": "SPAN",
+          "ref": "root-span",
+          "span_id": "root-span",
+          "trace_id": "trace-3",
+          "ts": "2026-02-10T00:00:00Z"
+        },
+        {
+          "excerpt_hash": "c326259d3954918b7c7bd2d151cd32cca9091de1442c3f8a15a1a2e54a942abd",
+          "kind": "CONFIG_DIFF",
+          "ref": "configdiff:de0d766875c6c8029f0bfa7c749d5ae41777d783d8efc67acefdb72939774359",
+          "span_id": "root-span",
+          "trace_id": "trace-3",
+          "ts": "2026-02-10T01:00:00Z"
+        }
+      ],
+      "timestamp": "2026-02-10T01:00:00Z"
+    }
+  ]
+}

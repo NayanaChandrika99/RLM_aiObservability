@@ -1,0 +1,1 @@
+How to run the system end-to-end, troubleshoot “no traces,” “missing spans,” “eval job fails,” “Phoenix not reachable,” etc. Keep it short and specific.

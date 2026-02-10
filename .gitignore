@@ -1,0 +1,25 @@
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Local tooling caches
+.uv-cache/
+.phoenix_data/
+
+# Data exports (trace datasets can be large; keep manifests and generators committed)
+datasets/**/exports/
+datasets/**/*.parquet
+
+# Reference repos (kept as standalone git repos)
+phoenix/
+rlm/

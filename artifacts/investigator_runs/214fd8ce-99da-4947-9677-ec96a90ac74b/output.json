@@ -1,0 +1,23 @@
+{
+  "confidence": 0.35,
+  "evidence_refs": [
+    {
+      "excerpt_hash": "e5ef485b3eb00024daf689837e23000376573a0ce17f1f28cde4cc80534e2013",
+      "kind": "SPAN",
+      "ref": "root-span",
+      "span_id": "root-span",
+      "trace_id": "trace-1",
+      "ts": null
+    }
+  ],
+  "gaps": [
+    "No recursive Inspection API traversal has been executed in stub mode."
+  ],
+  "primary_label": "instruction_failure",
+  "remediation": [
+    "Review prompt instructions and expected output schema."
+  ],
+  "schema_version": "1.0.0",
+  "summary": "Stub RCA selected instruction failure pending full recursive inspection.",
+  "trace_id": "trace-1"
+}

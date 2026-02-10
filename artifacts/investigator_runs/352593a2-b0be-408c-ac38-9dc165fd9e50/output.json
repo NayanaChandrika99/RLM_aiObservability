@@ -1,0 +1,29 @@
+{
+  "controls_evaluated": [
+    {
+      "confidence": 0.78,
+      "control_id": "control.error.free",
+      "controls_version": "controls-v1",
+      "evidence_refs": [
+        {
+          "excerpt_hash": "ab21055476a85dbe01a0e4c79b0dfe67e2ab544d62821aaea2f15a7d0cd9e808",
+          "kind": "SPAN",
+          "ref": "c2df1e84c35cb4a3",
+          "span_id": "c2df1e84c35cb4a3",
+          "trace_id": "894a36cc2da61c2aadf4d6bf4d21e29d",
+          "ts": "2026-02-10T02:27:42Z"
+        }
+      ],
+      "missing_evidence": [],
+      "pass_fail": "fail",
+      "remediation": "Investigate and eliminate ERROR spans before approval.",
+      "severity": "high"
+    }
+  ],
+  "controls_version": "controls-v1",
+  "gaps": [],
+  "overall_confidence": 0.78,
+  "overall_verdict": "non_compliant",
+  "schema_version": "1.0.0",
+  "trace_id": "894a36cc2da61c2aadf4d6bf4d21e29d"
+}

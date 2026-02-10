@@ -1,0 +1,128 @@
+{
+  "agent_trace_summary": {
+    "collector_endpoint": "http://127.0.0.1:6006",
+    "final_answer": "There are 3,503 tracks in the Track table.\n\nQuery run:\nSELECT COUNT(*) AS track_count FROM Track;",
+    "model_name": "gpt-5-mini",
+    "otlp_endpoint": "http://127.0.0.1:6006/v1/traces",
+    "project_name": "phase1-langgraph-tutorial",
+    "question": "How many tracks are in the Track table? Use the database tools.",
+    "span_count": 139,
+    "span_kinds": [
+      "AGENT",
+      "CHAIN",
+      "LLM",
+      "TOOL"
+    ],
+    "tool_span_count": 12,
+    "trace_count": 5
+  },
+  "capabilities": {
+    "compliance": {
+      "baseline": {
+        "accuracy": 0.9090909090909091
+      },
+      "delta": {
+        "accuracy": 0.0
+      },
+      "rlm": {
+        "accuracy": 0.9090909090909091
+      },
+      "sample_count": 22
+    },
+    "incident": {
+      "baseline": {
+        "overlap_at_k": 0.6666666666666666,
+        "selected_trace_ids": [
+          "9896181524ce39ef18c00e850dd7b0f7",
+          "a5cad9e58dcb7eefb4accdba60f4a1e0",
+          "61796e497211c350f35e8c297e0be3f9"
+        ]
+      },
+      "delta": {
+        "overlap_at_k": -0.6666666666666666
+      },
+      "rlm": {
+        "overlap_at_k": 0.0,
+        "selected_trace_ids": [
+          "trace-stub"
+        ]
+      },
+      "sample_count": 22
+    },
+    "rca": {
+      "baseline": {
+        "accuracy": 0.13636363636363635
+      },
+      "delta": {
+        "accuracy": 0.2272727272727273
+      },
+      "rlm": {
+        "accuracy": 0.36363636363636365
+      },
+      "sample_count": 22
+    }
+  },
+  "dataset": {
+    "dataset_hash": "b209f22b0340db1dc9d8e5a02964fd8c124b39b36b82e74e1675b80d9308b3e2",
+    "manifest_path": "/Users/nainy/Documents/Personal/rlm_observability/datasets/seeded_failures/manifest.json",
+    "spans_parquet_path": "/Users/nainy/Documents/Personal/rlm_observability/datasets/seeded_failures/exports/spans.parquet",
+    "trace_count": 22
+  },
+  "generated_at": "2026-02-10T14:06:06Z",
+  "proof_report_path": "/Users/nainy/Documents/Personal/rlm_observability/artifacts/proof_runs/phase7-proof-20260210T140604Z/proof_report.json",
+  "proof_run_id": "phase7-proof-20260210T140604Z",
+  "run_artifacts": {
+    "compliance": [
+      "bf02611d-c8ee-499b-8d3d-e35be7f36300",
+      "e3dd2ae5-1696-4b08-a4ed-8f663e2dade9",
+      "fb5bc408-7d2e-4183-973e-d82a3822f503",
+      "4419a5ed-b3c7-4151-bf1a-60b658dcd1ac",
+      "654f6cb2-7423-415c-b7c0-24114176c2de",
+      "88d03c45-e19d-4dae-8e75-721531fce968",
+      "dc5c076b-079d-4e9a-ae96-0744da39f59f",
+      "dc53daff-a673-4788-a7e0-5f72c40a6ba4",
+      "07618cc8-514a-46a0-9abe-e8c46a0a4045",
+      "5bda053a-634d-43d0-835e-d16c2bddab6e",
+      "4a1075a8-f2ef-4c22-83f7-0e30b4ee0434",
+      "481cb2f5-6df7-4bf2-87ff-2c11ac6d9db9",
+      "c30af233-aa1f-486d-a11b-4db39a2d630f",
+      "34ae2629-b520-4c47-9286-d51671a2c0f7",
+      "4d64c694-6baf-4c87-b191-b96942e035cd",
+      "dc283dc5-f922-474f-be5f-5ec548adde33",
+      "b5ceef65-db66-4df2-968e-cde0c88a3d8d",
+      "9f0c23ea-804a-46d9-9ce4-4463e5a46542",
+      "e2118a7e-ce93-4a2f-8c04-aba206ce1f70",
+      "5da4456a-0af0-49de-9af6-c3b0251099d7",
+      "31b4abfb-248f-4b1d-a4a7-3723b738fd05",
+      "4ecd175f-2bdc-4f68-895b-a059497f5298"
+    ],
+    "incident": [
+      "145cdf76-4f51-4363-b729-c2c39370a19c"
+    ],
+    "rca": [
+      "9fc832ff-4242-4725-9ed1-9167b34e450b",
+      "fa249395-f45f-403c-9200-abfdbc42d323",
+      "72f80df2-b437-4221-97c7-f1c4e8768ee9",
+      "a6c20a03-65a4-4e72-870e-e53d024985d4",
+      "5b5ad5d0-d0f0-4928-ae14-618c0777fb3a",
+      "36928f42-1dd2-4c43-80f7-3dbfd679a898",
+      "a4167f44-be4e-401d-97b5-f067659778d4",
+      "c5b63f26-31ff-4bf1-a437-d026413b0cd7",
+      "4afb085c-9951-4142-9040-59dbe679dd02",
+      "e17861c3-0601-41e2-99fb-5f6d7aed4d99",
+      "ae4a386e-5203-40e6-ad7f-4f647fc305a1",
+      "fea92512-d076-48e5-9b4b-3c2f24427a98",
+      "f0a2d8d0-02da-4889-a576-805c708a3910",
+      "56119e40-2e17-4ad1-a2dd-153471277c94",
+      "103cbd61-ac54-4379-bc39-d9499869523b",
+      "df57e146-fbb2-4e56-a68d-50539c5221f3",
+      "19e525bb-c63e-4e31-b052-b7a8f722e33b",
+      "ca2872d8-bb39-4d3e-8d19-0beb0fea7302",
+      "2dbf783f-a52e-48fe-8133-fb737c8ce1c1",
+      "ad596945-bbe6-4d43-bcca-e2b13a049fef",
+      "c4048c71-3c62-4764-ba42-2ff83fef9f94",
+      "5c7a101c-b25a-4910-8863-7ea7c46bedc1"
+    ]
+  },
+  "seeded_export_rows": 0
+}

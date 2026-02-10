@@ -1,0 +1,69 @@
+{
+  "completed_at": "2026-02-10T14:07:45Z",
+  "dataset_ref": {
+    "dataset_hash": null,
+    "dataset_id": null
+  },
+  "error": null,
+  "input_ref": {
+    "controls_version": "controls-v1",
+    "filter_expr": null,
+    "project_name": "phase1-seeded-failures",
+    "time_window": {
+      "end": null,
+      "start": null
+    },
+    "trace_ids": [
+      "894a36cc2da61c2aadf4d6bf4d21e29d"
+    ]
+  },
+  "output_ref": {
+    "artifact_path": "/Users/nainy/Documents/Personal/rlm_observability/artifacts/investigator_runs/352593a2-b0be-408c-ac38-9dc165fd9e50/output.json",
+    "artifact_type": "ComplianceReport",
+    "schema_version": "1.0.0"
+  },
+  "run_id": "352593a2-b0be-408c-ac38-9dc165fd9e50",
+  "run_type": "policy_compliance",
+  "runtime_ref": {
+    "budget": {
+      "max_cost_usd": null,
+      "max_depth": 2,
+      "max_iterations": 40,
+      "max_subcalls": 80,
+      "max_tokens_total": 300000,
+      "max_tool_calls": 200,
+      "max_wall_time_sec": 180,
+      "sampling_seed": null
+    },
+    "engine_version": "0.3.0",
+    "model_name": "gpt-5-mini",
+    "model_provider": "openai",
+    "prompt_template_hash": "policy-compliance-verdict-v1",
+    "temperature": 0.0,
+    "usage": {
+      "depth_reached": 0,
+      "iterations": 1,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "tool_calls": 0
+    }
+  },
+  "schema_version": "1.0.0",
+  "started_at": "2026-02-10T14:07:45Z",
+  "status": "succeeded",
+  "writeback_ref": {
+    "annotation_names": [
+      "compliance.overall",
+      "compliance.control.control.error.free.evidence"
+    ],
+    "annotator_kinds": [
+      "LLM",
+      "CODE"
+    ],
+    "phoenix_annotation_ids": [
+      "fake-0",
+      "fake-1"
+    ],
+    "writeback_status": "succeeded"
+  }
+}

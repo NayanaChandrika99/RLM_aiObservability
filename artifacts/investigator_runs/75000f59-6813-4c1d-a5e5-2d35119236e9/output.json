@@ -1,0 +1,83 @@
+{
+  "confidence": 0.2,
+  "gaps": [
+    "Stub mode does not execute trace clustering or config diff APIs yet."
+  ],
+  "hypotheses": [
+    {
+      "confidence": 0.2,
+      "evidence_refs": [
+        {
+          "excerpt_hash": "532e1822ea41a026ab86b9f0bd2f2bb82a4054b0408151eb6c6f2532ef5e85b0",
+          "kind": "SPAN",
+          "ref": "root-span",
+          "span_id": "root-span",
+          "trace_id": "trace-3",
+          "ts": "2026-02-10T00:00:00Z"
+        }
+      ],
+      "rank": 1,
+      "statement": "Insufficient evidence for root-cause attribution in stub mode."
+    }
+  ],
+  "impacted_components": [
+    "agent_orchestrator"
+  ],
+  "incident_summary": "Stub incident dossier generated pending recursive multi-trace inspection.",
+  "recommended_actions": [
+    {
+      "action": "Run full incident engine with config snapshots and recursive inspection enabled.",
+      "priority": "P1",
+      "type": "follow_up_fix"
+    }
+  ],
+  "representative_traces": [
+    {
+      "evidence_refs": [
+        {
+          "excerpt_hash": "532e1822ea41a026ab86b9f0bd2f2bb82a4054b0408151eb6c6f2532ef5e85b0",
+          "kind": "SPAN",
+          "ref": "root-span",
+          "span_id": "root-span",
+          "trace_id": "trace-3",
+          "ts": "2026-02-10T00:00:00Z"
+        }
+      ],
+      "trace_id": "trace-3",
+      "why_selected": "Stub selected the first available override trace."
+    }
+  ],
+  "schema_version": "1.0.0",
+  "suspected_change": {
+    "change_ref": "not-identified",
+    "change_type": "unknown",
+    "diff_ref": null,
+    "evidence_refs": [
+      {
+        "excerpt_hash": "532e1822ea41a026ab86b9f0bd2f2bb82a4054b0408151eb6c6f2532ef5e85b0",
+        "kind": "SPAN",
+        "ref": "root-span",
+        "span_id": "root-span",
+        "trace_id": "trace-3",
+        "ts": "2026-02-10T00:00:00Z"
+      }
+    ],
+    "summary": "No config diff lookup executed in stub mode."
+  },
+  "timeline": [
+    {
+      "event": "Incident trigger window opened.",
+      "evidence_refs": [
+        {
+          "excerpt_hash": "532e1822ea41a026ab86b9f0bd2f2bb82a4054b0408151eb6c6f2532ef5e85b0",
+          "kind": "SPAN",
+          "ref": "root-span",
+          "span_id": "root-span",
+          "trace_id": "trace-3",
+          "ts": "2026-02-10T00:00:00Z"
+        }
+      ],
+      "timestamp": "2026-02-10T00:00:00Z"
+    }
+  ]
+}

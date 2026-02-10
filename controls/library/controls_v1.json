@@ -1,0 +1,17 @@
+{
+  "controls": [
+    {
+      "applies_when": {
+        "app_types": [],
+        "data_domains": [],
+        "tools": []
+      },
+      "control_id": "control.error.free",
+      "controls_version": "controls-v1",
+      "max_error_spans": 0,
+      "remediation_template": "Investigate and eliminate ERROR spans before approval.",
+      "required_evidence": [],
+      "severity": "high"
+    }
+  ]
+}

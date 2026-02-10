@@ -1,0 +1,29 @@
+{
+  "confidence": 0.78,
+  "evidence_refs": [
+    {
+      "excerpt_hash": "273178835a28715f7444ca79d68f444091a4458c570aefcd6cc8e3faa7ff69e0",
+      "kind": "SPAN",
+      "ref": "4ffbe98d60b580d0",
+      "span_id": "4ffbe98d60b580d0",
+      "trace_id": "dbb69e2218a2c3be2bc4f0def890f66f",
+      "ts": "2026-02-10T02:27:42Z"
+    },
+    {
+      "excerpt_hash": "911b50906636b1a7e827103fcc429f412285ce11399506e20402b3097d43fec9",
+      "kind": "SPAN",
+      "ref": "80d57adc18636e59",
+      "span_id": "80d57adc18636e59",
+      "trace_id": "dbb69e2218a2c3be2bc4f0def890f66f",
+      "ts": "2026-02-10T02:27:42Z"
+    }
+  ],
+  "gaps": [],
+  "primary_label": "upstream_dependency_failure",
+  "remediation": [
+    "Add resilience for upstream API failure paths (timeouts, backoff, fallback handling)."
+  ],
+  "schema_version": "1.0.0",
+  "summary": "Deterministic narrowing and recursive branch inspection selected spans ['4ffbe98d60b580d0', '80d57adc18636e59']; RCA labeled trace as upstream_dependency_failure.",
+  "trace_id": "dbb69e2218a2c3be2bc4f0def890f66f"
+}

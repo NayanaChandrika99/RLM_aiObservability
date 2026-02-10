@@ -1,0 +1,147 @@
+{
+  "agent_trace_summary": {
+    "collector_endpoint": "http://127.0.0.1:6006",
+    "final_answer": "There are 3,503 tracks in the Track table.\n\nQuery run:\nSELECT COUNT(*) AS track_count FROM Track;",
+    "model_name": "gpt-5-mini",
+    "otlp_endpoint": "http://127.0.0.1:6006/v1/traces",
+    "project_name": "phase1-langgraph-tutorial",
+    "question": "How many tracks are in the Track table? Use the database tools.",
+    "span_count": 232,
+    "span_kinds": [
+      "AGENT",
+      "CHAIN",
+      "LLM",
+      "TOOL",
+      "UNKNOWN"
+    ],
+    "tool_span_count": 15,
+    "trace_count": 36
+  },
+  "capabilities": {
+    "compliance": {
+      "baseline": {
+        "accuracy": 0.9333333333333333
+      },
+      "delta": {
+        "accuracy": 0.0
+      },
+      "rlm": {
+        "accuracy": 0.9333333333333333
+      },
+      "sample_count": 30
+    },
+    "incident": {
+      "baseline": {
+        "overlap_at_k": 1.0,
+        "selected_trace_ids": [
+          "9896181524ce39ef18c00e850dd7b0f7",
+          "5cf918b974f240222a318e71802ac192",
+          "df2d65492376e9588b5852aaaaac72f7"
+        ]
+      },
+      "delta": {
+        "overlap_at_k": -1.0
+      },
+      "rlm": {
+        "overlap_at_k": 0.0,
+        "selected_trace_ids": [
+          "0c645b980fb2c4ce0c0ffebcafcc6b41",
+          "15d2fbcc3f465fca546880401ce8c10e",
+          "2f7d3d07b5e04cee563d692bf386d66f"
+        ]
+      },
+      "sample_count": 52
+    },
+    "rca": {
+      "baseline": {
+        "accuracy": 0.06666666666666667
+      },
+      "delta": {
+        "accuracy": 0.3666666666666667
+      },
+      "rlm": {
+        "accuracy": 0.43333333333333335
+      },
+      "sample_count": 30
+    }
+  },
+  "dataset": {
+    "dataset_hash": "0c3455171cac1b8a3dc0fb4230f301f0abab4883319b750a54e340867120edf9",
+    "manifest_path": "datasets/seeded_failures/manifest.json",
+    "spans_parquet_path": "datasets/seeded_failures/exports/spans.parquet",
+    "trace_count": 30
+  },
+  "generated_at": "2026-02-10T14:07:45Z",
+  "proof_report_path": "/Users/nainy/Documents/Personal/rlm_observability/artifacts/proof_runs/phase7-proof-20260210T140743Z/proof_report.json",
+  "proof_run_id": "phase7-proof-20260210T140743Z",
+  "run_artifacts": {
+    "compliance": [
+      "4dc8e69b-b5a5-429f-a415-ce0c5e2d6c33",
+      "0e551176-41df-4f7b-8853-198acde787d5",
+      "83d7b2cb-7bf6-4246-b0b5-093be8d13e5d",
+      "bef1f3f6-385e-4d1b-8f90-bf1229f6418c",
+      "067e10de-626e-41df-878d-6dc9a5536ad4",
+      "679cfc5c-26ea-4245-973e-a7c00dc35da0",
+      "d46c7d60-5d1e-4898-9300-dcdec3488a79",
+      "882368c3-b005-4740-a441-4e66d1bf74e2",
+      "6dc77d10-6302-49c3-95e4-8ab9985e524b",
+      "a577abbc-cd9b-42e4-8570-6cdba1ed95ef",
+      "16b4ea65-e7f7-4764-a462-559ae9e9a996",
+      "5e255d01-03a6-4b01-9c8c-b9907fe8dd83",
+      "a7765ef9-3575-4651-923f-553a00a2937c",
+      "adcb77cf-e777-4dad-9b7f-c0b2907bd31a",
+      "352593a2-b0be-408c-ac38-9dc165fd9e50",
+      "2f027c8d-0198-4539-827a-9641e8ff5340",
+      "bd770898-09d7-4d73-95e6-878cd3b001bc",
+      "579e27cc-b265-4780-a664-b15282d1ef80",
+      "fbe6b8dc-ba99-4595-b674-6953f9e6b8b9",
+      "8218842c-32fb-45e8-a40d-842b9f74b7eb",
+      "5d16c4bd-30c1-4d69-a312-d03270a0e99d",
+      "89f21e81-6a0a-4d5e-bb41-d2685c9cd868",
+      "f179c459-f7f4-4261-b9b4-253b0ddb81ea",
+      "8f8c533f-46ae-46fd-a65e-cd13fcc498f7",
+      "d83c896c-bb8c-4a4d-be9d-b46e8b29023f",
+      "dd37fced-1d0e-470b-a7a8-06a5bd9b48d6",
+      "a4f357ed-f57c-4a5b-8049-041028ada63c",
+      "292da433-524b-40d7-b74d-ba65eb3bf270",
+      "86f42056-cb98-4def-a237-45e71af4b681",
+      "010d4b3e-c8ca-43d2-8eb2-4135d89dfb77"
+    ],
+    "incident": [
+      "f2d4b999-1437-4574-9b35-19ab35cbe728"
+    ],
+    "rca": [
+      "242e9a7b-d845-4c3d-933e-508cd0109cd0",
+      "c86090af-f7d6-4c88-926b-eead3561166d",
+      "7bac04c5-790b-45f3-8e25-331a4f97a9a9",
+      "81b02607-28e6-466c-b2e8-a62db6029cbe",
+      "7b5645f1-82dc-45bc-9bd9-514a47c60d1e",
+      "2d78fd10-1922-45db-b6ae-b31d94b41b61",
+      "0049cd82-c32d-4cd9-856a-c4aa6065cbdf",
+      "ce9b95ee-7209-49a4-bf59-42b5c6a8d5f3",
+      "e8707712-2565-483a-848a-895a2aa2fc34",
+      "c9426402-2af7-4663-bac6-4c9aa5d42180",
+      "b77f27a2-7913-4573-84d1-b43f459660ff",
+      "529d022d-0372-46fa-acf2-0a61e3d2a4ea",
+      "e67c8bf1-b204-4ebe-a770-80244cb3361a",
+      "3474833a-0f89-4c95-9bdd-0a537deadf7c",
+      "89bc79e1-7823-4992-925e-4f7ff55a4216",
+      "8ec208f6-e812-4408-8ce5-a4d35fa69082",
+      "5309bc4e-14c3-4273-9e12-76585a13a9fd",
+      "cd840845-106a-4304-8f90-0a5b78b4726f",
+      "7c7340b0-6ffc-43b1-a76c-e18792f49773",
+      "fcdbde8d-b2be-4a32-8db9-ca21b145b761",
+      "528c6093-15c7-4860-ac51-b06974e76e51",
+      "e0865afa-eee2-4ba0-ab7b-24c1a6f75203",
+      "16ffbe7b-4372-470b-8d2c-3ec2b995c47e",
+      "a1e55f85-f93b-4800-8307-3cd00068bc16",
+      "0c88ab6e-bf90-49b5-a8b3-0a410e358707",
+      "f0c5be35-362f-4db0-88c1-9fb0d9c2a84e",
+      "d6830569-8bc6-4794-af95-30a58b632838",
+      "50784c31-efec-4502-b619-9001960cfe92",
+      "78a4c80b-3e2e-4aaa-b950-e118036e3c27",
+      "72549ed4-bb5c-4f85-bcdb-6a9f9097e961"
+    ]
+  },
+  "seeded_export_rows": 103
+}

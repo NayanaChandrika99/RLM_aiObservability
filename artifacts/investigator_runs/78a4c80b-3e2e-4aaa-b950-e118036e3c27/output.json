@@ -1,0 +1,29 @@
+{
+  "confidence": 0.74,
+  "evidence_refs": [
+    {
+      "excerpt_hash": "c7d71bb33a7c425e13554772d7b8eb6e88e5519d479f6b83d1d1157730085340",
+      "kind": "SPAN",
+      "ref": "8c117ea656f1ea13",
+      "span_id": "8c117ea656f1ea13",
+      "trace_id": "e534506af59d7503e85217355f8eb962",
+      "ts": "2026-02-10T02:27:42Z"
+    },
+    {
+      "excerpt_hash": "911b50906636b1a7e827103fcc429f412285ce11399506e20402b3097d43fec9",
+      "kind": "SPAN",
+      "ref": "ac5fcc78f9bcf80a",
+      "span_id": "ac5fcc78f9bcf80a",
+      "trace_id": "e534506af59d7503e85217355f8eb962",
+      "ts": "2026-02-10T02:27:42Z"
+    }
+  ],
+  "gaps": [],
+  "primary_label": "data_schema_mismatch",
+  "remediation": [
+    "Align tool output schema with parser expectations and add strict validation tests."
+  ],
+  "schema_version": "1.0.0",
+  "summary": "Deterministic narrowing and recursive branch inspection selected spans ['8c117ea656f1ea13', 'ac5fcc78f9bcf80a']; RCA labeled trace as data_schema_mismatch.",
+  "trace_id": "e534506af59d7503e85217355f8eb962"
+}

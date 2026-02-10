@@ -1,0 +1,37 @@
+{
+  "controls_evaluated": [
+    {
+      "confidence": 0.78,
+      "control_id": "control.error.free",
+      "controls_version": "controls-v1",
+      "evidence_refs": [
+        {
+          "excerpt_hash": "cd3bdba4cb2008667027bfb20cc67f7f87af73644d8e5aa27cc4f287668941e3",
+          "kind": "SPAN",
+          "ref": "ad252a784d7fcf8a",
+          "span_id": "ad252a784d7fcf8a",
+          "trace_id": "bfe9c4e6ee8f5f31f0c7a7c8f8700274",
+          "ts": "2026-02-10T02:27:42Z"
+        },
+        {
+          "excerpt_hash": "e1b4f45a035d428315de9235e7621185b74fd68b3bce418514ed05757b13cd63",
+          "kind": "SPAN",
+          "ref": "d465d7817da7c2b3",
+          "span_id": "d465d7817da7c2b3",
+          "trace_id": "bfe9c4e6ee8f5f31f0c7a7c8f8700274",
+          "ts": "2026-02-10T02:27:42Z"
+        }
+      ],
+      "missing_evidence": [],
+      "pass_fail": "fail",
+      "remediation": "Investigate and eliminate ERROR spans before approval.",
+      "severity": "high"
+    }
+  ],
+  "controls_version": "controls-v1",
+  "gaps": [],
+  "overall_confidence": 0.78,
+  "overall_verdict": "non_compliant",
+  "schema_version": "1.0.0",
+  "trace_id": "bfe9c4e6ee8f5f31f0c7a7c8f8700274"
+}

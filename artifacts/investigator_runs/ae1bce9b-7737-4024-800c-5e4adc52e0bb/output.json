@@ -1,0 +1,32 @@
+{
+  "controls_evaluated": [
+    {
+      "confidence": 0.4,
+      "control_id": "control.no_applicable_controls",
+      "controls_version": "controls-v1",
+      "evidence_refs": [
+        {
+          "excerpt_hash": "b98277aa885cb7881697ee8ed8dfcc7b9c4b04acc57ed9ca4e32a28fc1035562",
+          "kind": "SPAN",
+          "ref": "root-span",
+          "span_id": "root-span",
+          "trace_id": "trace-2",
+          "ts": null
+        }
+      ],
+      "missing_evidence": [],
+      "pass_fail": "not_applicable",
+      "remediation": "No scoped controls matched this trace and controls version.",
+      "severity": "low"
+    }
+  ],
+  "controls_version": "controls-v1",
+  "gaps": [
+    "Failed to list spans for compliance evaluation: [Errno 61] Connection refused",
+    "No controls were scoped for controls_version=controls-v1."
+  ],
+  "overall_confidence": 0.4,
+  "overall_verdict": "needs_review",
+  "schema_version": "1.0.0",
+  "trace_id": "trace-2"
+}

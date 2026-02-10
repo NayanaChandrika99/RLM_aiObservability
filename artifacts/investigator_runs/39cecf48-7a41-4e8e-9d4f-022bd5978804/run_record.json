@@ -1,0 +1,60 @@
+{
+  "completed_at": "2026-02-10T13:12:58Z",
+  "dataset_ref": {
+    "dataset_hash": null,
+    "dataset_id": null
+  },
+  "error": null,
+  "input_ref": {
+    "controls_version": null,
+    "filter_expr": "status_code == 'ERROR'",
+    "project_name": "phoenix-rlm",
+    "time_window": {
+      "end": "2026-02-10T01:00:00Z",
+      "start": "2026-02-10T00:00:00Z"
+    },
+    "trace_ids": [
+      "trace-3"
+    ]
+  },
+  "output_ref": {
+    "artifact_path": "artifacts/investigator_runs/39cecf48-7a41-4e8e-9d4f-022bd5978804/output.json",
+    "artifact_type": "IncidentDossier",
+    "schema_version": "1.0.0"
+  },
+  "run_id": "39cecf48-7a41-4e8e-9d4f-022bd5978804",
+  "run_type": "incident_dossier",
+  "runtime_ref": {
+    "budget": {
+      "max_cost_usd": null,
+      "max_depth": 2,
+      "max_iterations": 40,
+      "max_subcalls": 80,
+      "max_tokens_total": 300000,
+      "max_tool_calls": 200,
+      "max_wall_time_sec": 180,
+      "sampling_seed": null
+    },
+    "engine_version": "0.2.0",
+    "model_name": "gpt-5-mini",
+    "model_provider": "openai",
+    "prompt_template_hash": "incident-representative-selector-v1",
+    "temperature": 0.0,
+    "usage": {
+      "depth_reached": 0,
+      "iterations": 1,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "tool_calls": 0
+    }
+  },
+  "schema_version": "1.0.0",
+  "started_at": "2026-02-10T13:12:58Z",
+  "status": "succeeded",
+  "writeback_ref": {
+    "annotation_names": [],
+    "annotator_kinds": [],
+    "phoenix_annotation_ids": [],
+    "writeback_status": "partial"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "confidence": 0.55,
+  "evidence_refs": [
+    {
+      "excerpt_hash": "3c1f345a5f9746965c27193bcf1d980605b7eefc295886dfe7ca25b67a0e277e",
+      "kind": "SPAN",
+      "ref": "36c30eb800c76218",
+      "span_id": "36c30eb800c76218",
+      "trace_id": "311dc103234425021add4deb57a5b359",
+      "ts": "2026-02-10T02:27:42Z"
+    },
+    {
+      "excerpt_hash": "911b50906636b1a7e827103fcc429f412285ce11399506e20402b3097d43fec9",
+      "kind": "SPAN",
+      "ref": "6c05fc5135472898",
+      "span_id": "6c05fc5135472898",
+      "trace_id": "311dc103234425021add4deb57a5b359",
+      "ts": "2026-02-10T02:27:42Z"
+    }
+  ],
+  "gaps": [],
+  "primary_label": "instruction_failure",
+  "remediation": [
+    "Tighten prompt instructions and output constraints to reduce format or policy drift."
+  ],
+  "schema_version": "1.0.0",
+  "summary": "Deterministic narrowing and recursive branch inspection selected spans ['36c30eb800c76218', '6c05fc5135472898']; RCA labeled trace as instruction_failure.",
+  "trace_id": "311dc103234425021add4deb57a5b359"
+}
