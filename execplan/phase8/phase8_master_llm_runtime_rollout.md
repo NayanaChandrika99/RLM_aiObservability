@@ -18,13 +18,13 @@ This rollout also adds prompt version pinning and explicit cost caps so proof ar
 - [x] (2026-02-10 15:00Z) Reviewed runtime, engine, inspection, proof, and contract references for Phase 8 design.
 - [x] (2026-02-10 15:00Z) Drafted initial Phase 8 rollout and subplans.
 - [x] (2026-02-10 15:08Z) Revised plans after Nainy review: provider abstraction, structured output strategy, explicit recursive state model, dataset-grounded compliance scope, and incident split.
-- [ ] Create Phase 8A shared LLM runtime implementation.
-- [ ] Create Phase 8B sandboxed recursive execution path.
-- [ ] Migrate RCA to real LLM judgment path behind proof-gated toggle.
-- [ ] Migrate compliance to real LLM judgment path and clear +0.05 proof threshold.
-- [ ] Complete incident selector-target alignment pass (deterministic).
-- [ ] Complete incident LLM synthesis pass without selector regression.
-- [ ] Run full phase proof and update outcomes with artifact links.
+- [x] (2026-02-10 15:42Z) Created Phase 8A shared LLM runtime implementation, including structured validation/retry and usage-cost accounting.
+- [x] (2026-02-10 15:50Z) Created Phase 8B sandboxed recursive execution path with recursion budgets and state transitions.
+- [x] (2026-02-10 15:58Z) Migrated RCA to real LLM judgment path behind runtime toggles and fallback handling.
+- [x] (2026-02-10 16:20Z) Migrated compliance to real LLM judgment path and cleared the +0.05 proof threshold on frozen benchmark data.
+- [x] (2026-02-10 16:32Z) Completed incident selector-target alignment pass with deterministic diagnostics for bucket/signature mismatches.
+- [x] (2026-02-10 16:47Z) Completed incident LLM synthesis pass with runtime signals and write-back provenance wiring.
+- [x] (2026-02-10 17:11Z) Ran full phase proof and full regression; updated outcomes with artifact links and final gate evidence.
 
 ## Surprises & Discoveries
 
@@ -60,7 +60,20 @@ This rollout also adds prompt version pinning and explicit cost caps so proof ar
 
 ## Outcomes & Retrospective
 
-Phase 8 planning is initialized. Implementation has not started yet. Success requires replacing metadata-only LLM declarations with real runtime invocation, while keeping schema contracts, evidence pointer guarantees, prompt reproducibility, and proof budget discipline intact.
+Phase 8 is complete. The evaluator runtime now performs real LLM calls with versioned prompts, schema-validated structured outputs, retry/fallback behavior, recursive sandbox-budget enforcement, and run-record usage/cost accounting across RCA, compliance, and incident engines.
+
+Validation evidence:
+
+- Live RCA smoke run with real model calls and non-zero usage/cost:
+  `artifacts/investigator_runs/phase8-live-rca-smoke-default-20260210T154137Z/run_record.json`
+- Full proof artifact with all gates passing:
+  `artifacts/proof_runs/phase7-proof-20260210T165400Z/proof_report.json`
+  - `gates.all_passed=true`
+  - `rca delta.accuracy=+0.3666666666666667`
+  - `compliance delta.accuracy=+0.33333333333333337`
+  - Incident gate passes at overlap ceiling with non-regression (`baseline_overlap_at_k=1.0`, `rlm_overlap_at_k=1.0`, `effective_threshold=0.0`)
+- Full regression run:
+  `uv run pytest tests/ -q -rs` produced `92 passed, 2 skipped` (skips are live integration tests gated by env vars).
 
 ## References
 
