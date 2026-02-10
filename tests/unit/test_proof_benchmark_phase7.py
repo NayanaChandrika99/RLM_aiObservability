@@ -192,6 +192,18 @@ def test_run_dataset_benchmark_returns_three_capability_comparisons(tmp_path: Pa
     assert incident["delta"]["overlap_at_k"] == (
         incident["rlm"]["overlap_at_k"] - incident["baseline"]["overlap_at_k"]
     )
+    diagnostics = incident["diagnostics"]
+    assert diagnostics["k"] == len(diagnostics["baseline"]["expected_ids"])
+    assert diagnostics["baseline"]["expected_ids"]
+    assert diagnostics["baseline"]["predicted_ids"]
+    assert "intersection" in diagnostics["baseline"]
+    assert diagnostics["rlm"]["expected_ids"] == diagnostics["baseline"]["expected_ids"]
+
+    gates = report["gates"]
+    assert set(gates["thresholds"].keys()) == {"rca", "compliance", "incident"}
+    assert set(gates["results"].keys()) == {"rca", "compliance", "incident"}
+    assert isinstance(gates["all_passed"], bool)
+
     assert report["run_artifacts"]["rca"]
     assert report["run_artifacts"]["compliance"]
     assert report["run_artifacts"]["incident"]

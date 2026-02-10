@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from investigator.proof.run_phase7_proof import run_frozen_dataset_proof
 
@@ -119,3 +120,36 @@ def test_run_frozen_dataset_proof_writes_artifact(tmp_path: Path) -> None:
     assert persisted["proof_run_id"] == "phase7-test"
     assert persisted["capabilities"] == report["capabilities"]
     assert persisted["dataset"]["trace_count"] == 1
+    assert persisted["gates"] == report["gates"]
+
+
+def test_run_frozen_dataset_proof_enforces_thresholds(tmp_path: Path) -> None:
+    parquet_path = tmp_path / "spans.parquet"
+    manifest_path = tmp_path / "manifest.json"
+    controls_dir = tmp_path / "controls"
+    snapshots_dir = tmp_path / "snapshots"
+    proof_root = tmp_path / "artifacts" / "proof_runs"
+    run_artifacts_root = tmp_path / "artifacts" / "investigator_runs"
+
+    _write_dataset(parquet_path, manifest_path)
+    _write_controls(controls_dir)
+    _write_snapshots(snapshots_dir)
+
+    with pytest.raises(RuntimeError, match="Proof thresholds failed"):
+        run_frozen_dataset_proof(
+            proof_run_id="phase7-gate-fail",
+            spans_parquet_path=parquet_path,
+            manifest_path=manifest_path,
+            project_name="phase7-proof",
+            controls_version="controls-v1",
+            controls_dir=controls_dir,
+            snapshots_dir=snapshots_dir,
+            proof_artifacts_root=proof_root,
+            evaluator_artifacts_root=run_artifacts_root,
+            delta_thresholds={
+                "rca": 1.0,
+                "compliance": 1.0,
+                "incident": 1.0,
+            },
+            enforce_thresholds=True,
+        )

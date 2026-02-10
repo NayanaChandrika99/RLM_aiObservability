@@ -14,7 +14,7 @@ from typing import Any
 from dotenv import load_dotenv
 import requests
 
-from investigator.proof.benchmark import run_dataset_benchmark
+from investigator.proof.benchmark import DEFAULT_DELTA_THRESHOLDS, run_dataset_benchmark
 
 
 DEFAULT_PHOENIX_BASE_URL = "http://127.0.0.1:6006"
@@ -128,6 +128,8 @@ def run_frozen_dataset_proof(
     snapshots_dir: str | Path,
     proof_artifacts_root: str | Path = "artifacts/proof_runs",
     evaluator_artifacts_root: str | Path = "artifacts/investigator_runs",
+    delta_thresholds: dict[str, float] | None = None,
+    enforce_thresholds: bool = False,
 ) -> dict[str, Any]:
     benchmark = run_dataset_benchmark(
         spans_parquet_path=spans_parquet_path,
@@ -137,17 +139,23 @@ def run_frozen_dataset_proof(
         snapshots_dir=snapshots_dir,
         project_name=project_name,
         artifacts_root=evaluator_artifacts_root,
+        delta_thresholds=delta_thresholds,
     )
     report = {
         "proof_run_id": proof_run_id,
         "generated_at": datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "dataset": benchmark["dataset"],
         "capabilities": benchmark["capabilities"],
+        "gates": benchmark["gates"],
         "run_artifacts": benchmark["run_artifacts"],
     }
     output_path = Path(proof_artifacts_root) / proof_run_id / "proof_report.json"
     _ensure_json(output_path, report)
     report["proof_report_path"] = str(output_path)
+    if enforce_thresholds and not bool(report["gates"]["all_passed"]):
+        raise RuntimeError(
+            f"Proof thresholds failed for {proof_run_id}. See {output_path} for gate details."
+        )
     return report
 
 
@@ -177,6 +185,11 @@ def run_phase7_proof() -> dict[str, Any]:
     _ensure_default_controls(controls_dir, DEFAULT_CONTROLS_VERSION)
     _ensure_default_snapshots(snapshots_dir)
 
+    enforce_thresholds = os.getenv("PHASE7_ENFORCE_THRESHOLDS", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+    }
     proof_run_id = f"phase7-proof-{_utc_timestamp()}"
     report = run_frozen_dataset_proof(
         proof_run_id=proof_run_id,
@@ -188,12 +201,18 @@ def run_phase7_proof() -> dict[str, Any]:
         snapshots_dir=snapshots_dir,
         proof_artifacts_root=repo_root / "artifacts" / "proof_runs",
         evaluator_artifacts_root=repo_root / "artifacts" / "investigator_runs",
+        delta_thresholds=DEFAULT_DELTA_THRESHOLDS,
+        enforce_thresholds=False,
     )
     report["agent_trace_summary"] = agent_summary
     report["seeded_export_rows"] = exported_rows
 
     summary_path = Path(report["proof_report_path"])
     _ensure_json(summary_path, report)
+    if enforce_thresholds and not bool(report["gates"]["all_passed"]):
+        raise RuntimeError(
+            f"Proof thresholds failed for {proof_run_id}. See {summary_path} for gate details."
+        )
     return report
 
 

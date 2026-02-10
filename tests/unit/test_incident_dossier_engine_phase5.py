@@ -162,7 +162,7 @@ def test_incident_selector_prioritizes_error_then_latency_with_signature_dedupe(
     selected_ids = [item.trace_id for item in dossier.representative_traces]
     reasons = [item.why_selected for item in dossier.representative_traces]
 
-    assert selected_ids == ["trace-a", "trace-d", "trace-c", "trace-e"]
+    assert selected_ids == ["trace-b", "trace-d", "trace-c", "trace-e"]
     assert reasons[0].startswith("error_bucket")
     assert reasons[1].startswith("error_bucket")
     assert reasons[2].startswith("latency_bucket")

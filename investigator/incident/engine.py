@@ -319,6 +319,7 @@ class IncidentDossierEngine:
             candidates,
             key=lambda candidate: (
                 -int(candidate.get("error_spans") or 0),
+                -float(candidate.get("latency_ms") or 0.0),
                 str(candidate.get("trace_id") or ""),
             ),
         )
