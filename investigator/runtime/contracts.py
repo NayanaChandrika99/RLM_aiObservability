@@ -52,6 +52,7 @@ class RuntimeUsage:
     tool_calls: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
+    cost_usd: float = 0.0
 
 
 @dataclass
@@ -78,7 +79,7 @@ class InputRef:
 @dataclass
 class RuntimeRef:
     engine_version: str
-    model_provider: Literal["openai"]
+    model_provider: str
     model_name: str
     temperature: float
     prompt_template_hash: str

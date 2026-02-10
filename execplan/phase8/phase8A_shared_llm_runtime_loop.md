@@ -23,10 +23,12 @@ Recursive delegation is explicitly deferred to Phase 8B.
 - [x] (2026-02-10 15:00Z) Reviewed runtime, contract, and engine references for model-call insertion points.
 - [x] (2026-02-10 15:00Z) Drafted initial Phase 8A plan.
 - [x] (2026-02-10 15:12Z) Revised Phase 8A with provider abstraction, structured output strategy, prompt versioning, cost caps, and test-isolation strategy.
-- [ ] Add shared runtime model client module.
-- [ ] Add structured response parser and failure taxonomy mapping.
-- [ ] Integrate runtime usage and cost accounting into `run_engine` artifacts.
-- [ ] Add tests that fail before implementation and pass after.
+- [x] (2026-02-10 15:35Z) Added shared runtime model client modules (`llm_client.py`, `llm_loop.py`) and prompt registry.
+- [x] (2026-02-10 15:35Z) Added structured response validation/retry loop and mapped exhausted retries to `MODEL_OUTPUT_INVALID`.
+- [x] (2026-02-10 15:35Z) Integrated runtime usage and cost accounting into `run_engine` artifacts (`cost_usd`, provider propagation, cost cap checks).
+- [x] (2026-02-10 15:35Z) Added Phase 8 RED->GREEN tests for prompt hashing, LLM client/loop, runtime accounting, and RCA engine LLM path.
+- [x] (2026-02-10 15:40Z) Ran a live RCA smoke call with `use_llm_judgment=True`; `run_record.json` persisted non-zero `tokens_in`, `tokens_out`, and `cost_usd`.
+- [x] (2026-02-10 15:42Z) Fixed OpenAI `gpt-5-mini` temperature compatibility in shared client and re-ran live smoke call successfully with default engine settings.
 
 ## Surprises & Discoveries
 
@@ -36,6 +38,10 @@ Recursive delegation is explicitly deferred to Phase 8B.
   Evidence: `RuntimeRef.model_provider: Literal["openai"]` in `investigator/runtime/contracts.py`.
 - Observation: Current prompt hash values are static string constants and are not tied to on-disk prompt content.
   Evidence: class attributes in `investigator/rca/engine.py`, `investigator/compliance/engine.py`, `investigator/incident/engine.py`.
+- Observation: Failed structured-generation retries can lose token/cost accounting unless usage is attached to the raised runtime error path.
+  Evidence: `tests/unit/test_trace_rca_engine_phase8_llm.py` initially failed with `tokens_in == 0` on `MODEL_OUTPUT_INVALID` until usage propagation was added.
+- Observation: `gpt-5-mini` rejects `temperature` on Responses API, so client must omit the parameter for this model family.
+  Evidence: Live smoke run at 2026-02-10 15:38Z failed with `400 Unsupported parameter: 'temperature'`; fixed via model-aware omission and validated by live rerun at 15:41Z.
 
 ## Decision Log
 
@@ -57,7 +63,7 @@ Recursive delegation is explicitly deferred to Phase 8B.
 
 ## Outcomes & Retrospective
 
-Phase not implemented yet. Success for this phase is defined as a reusable, tested model-call loop used by at least one engine path, with non-zero token/cost usage reflected in run artifacts during live calls.
+Phase implemented for the shared runtime loop and one engine path (`TraceRCAEngine` opt-in LLM mode). Shared model invocation, structured retry behavior, prompt hashing, and runtime usage/cost persistence are now covered by unit tests and one live smoke run.
 
 ## References
 

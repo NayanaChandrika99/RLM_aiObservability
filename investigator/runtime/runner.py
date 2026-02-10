@@ -22,6 +22,7 @@ from investigator.runtime.contracts import (
     WritebackRef,
     utc_now_rfc3339,
 )
+from investigator.runtime.llm_client import ModelOutputInvalidError
 from investigator.runtime.validation import validate_output_evidence, validate_output_schema
 
 
@@ -57,7 +58,14 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
-def _collect_runtime_signals(engine: Engine[RequestT, OutputT]) -> tuple[RuntimeUsage, int, list[str]]:
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _collect_runtime_signals(engine: Engine[RequestT, OutputT]) -> tuple[RuntimeUsage, int, list[str], str | None]:
     runtime_signals: dict[str, Any] = {}
     if hasattr(engine, "get_runtime_signals"):
         candidate = engine.get_runtime_signals()
@@ -69,11 +77,14 @@ def _collect_runtime_signals(engine: Engine[RequestT, OutputT]) -> tuple[Runtime
         tool_calls=_safe_int(runtime_signals.get("tool_calls"), default=0),
         tokens_in=_safe_int(runtime_signals.get("tokens_in"), default=0),
         tokens_out=_safe_int(runtime_signals.get("tokens_out"), default=0),
+        cost_usd=_safe_float(runtime_signals.get("cost_usd"), default=0.0),
     )
     subcalls = _safe_int(runtime_signals.get("subcalls"), default=0)
     raw_violations = runtime_signals.get("sandbox_violations") or []
     sandbox_violations = [str(item) for item in raw_violations if str(item).strip()]
-    return usage, subcalls, sandbox_violations
+    provider_candidate = str(runtime_signals.get("model_provider") or "").strip()
+    model_provider = provider_candidate if provider_candidate else None
+    return usage, subcalls, sandbox_violations, model_provider
 
 
 def _recursion_limit_messages(
@@ -95,6 +106,8 @@ def _recursion_limit_messages(
         token_total = usage.tokens_in + usage.tokens_out
         if token_total > budget.max_tokens_total:
             messages.append(f"tokens_total {token_total} exceeded max_tokens_total {budget.max_tokens_total}")
+    if budget.max_cost_usd is not None and usage.cost_usd > budget.max_cost_usd:
+        messages.append(f"cost_usd {usage.cost_usd:.6f} exceeded max_cost_usd {budget.max_cost_usd}")
     return messages
 
 
@@ -133,7 +146,8 @@ def run_engine(
     try:
         output = engine.run(request)
         elapsed_seconds = time.monotonic() - start_monotonic
-        usage, subcalls, sandbox_violations = _collect_runtime_signals(engine)
+        usage, subcalls, sandbox_violations, signal_model_provider = _collect_runtime_signals(engine)
+        model_provider = signal_model_provider or str(getattr(engine, "model_provider", "openai"))
         output_payload = output.to_dict() if hasattr(output, "to_dict") else {"output": str(output)}
         completed_at = utc_now_rfc3339()
         run_record = RunRecord(
@@ -146,7 +160,7 @@ def run_engine(
             input_ref=engine.build_input_ref(request),
             runtime_ref=RuntimeRef(
                 engine_version=engine.engine_version,
-                model_provider="openai",
+                model_provider=model_provider,
                 model_name=engine.model_name,
                 temperature=engine.temperature,
                 prompt_template_hash=engine.prompt_template_hash,
@@ -241,6 +255,16 @@ def run_engine(
     except Exception as exc:  # pragma: no cover
         if isinstance(exc, RuntimeError) and exc.args and isinstance(exc.args[0], dict):
             raise
+        usage, _, _, signal_model_provider = _collect_runtime_signals(engine)
+        if usage.iterations <= 0:
+            usage.iterations = 1
+        model_provider = signal_model_provider or str(getattr(engine, "model_provider", "openai"))
+        error_code = "UNEXPECTED_RUNTIME_ERROR"
+        error_stage = "run_engine"
+        retryable = False
+        if isinstance(exc, ModelOutputInvalidError):
+            error_code = "MODEL_OUTPUT_INVALID"
+            error_stage = "runtime_model"
         completed_at = utc_now_rfc3339()
         run_record = RunRecord(
             run_id=active_run_id,
@@ -252,12 +276,12 @@ def run_engine(
             input_ref=engine.build_input_ref(request),
             runtime_ref=RuntimeRef(
                 engine_version=engine.engine_version,
-                model_provider="openai",
+                model_provider=model_provider,
                 model_name=engine.model_name,
                 temperature=engine.temperature,
                 prompt_template_hash=engine.prompt_template_hash,
                 budget=active_budget,
-                usage=RuntimeUsage(iterations=1),
+                usage=usage,
             ),
             output_ref=OutputRef(
                 artifact_type=engine.output_contract_name,
@@ -266,10 +290,10 @@ def run_engine(
             ),
             writeback_ref=WritebackRef(writeback_status="failed"),
             error=RunError(
-                code="UNEXPECTED_RUNTIME_ERROR",
+                code=error_code,
                 message=str(exc),
-                stage="run_engine",
-                retryable=False,
+                stage=error_stage,
+                retryable=retryable,
             ),
         )
         _write_json(run_record_path, run_record.to_dict())

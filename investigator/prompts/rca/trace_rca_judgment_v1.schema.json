@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["primary_label", "summary", "confidence", "remediation", "gaps"],
+  "properties": {
+    "primary_label": {
+      "type": "string",
+      "enum": [
+        "retrieval_failure",
+        "tool_failure",
+        "instruction_failure",
+        "upstream_dependency_failure",
+        "data_schema_mismatch"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "remediation": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

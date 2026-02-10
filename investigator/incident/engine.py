@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from investigator.inspection_api import PhoenixInspectionAPI
+from investigator.runtime.prompt_registry import get_prompt_definition
 from investigator.runtime.contracts import (
     EvidenceRef,
     IncidentDossier,
@@ -30,12 +31,17 @@ class IncidentDossierRequest:
     trace_ids_override: list[str] = field(default_factory=list)
 
 
+_INCIDENT_PROMPT_ID = "incident_dossier_judgment_v1"
+_INCIDENT_PROMPT = get_prompt_definition(_INCIDENT_PROMPT_ID)
+
+
 class IncidentDossierEngine:
     engine_type = "incident_dossier"
     output_contract_name = "IncidentDossier"
     engine_version = "0.2.0"
+    model_provider = "openai"
     model_name = "gpt-5-mini"
-    prompt_template_hash = "incident-representative-selector-v1"
+    prompt_template_hash = _INCIDENT_PROMPT.prompt_template_hash
     temperature = 0.0
 
     def __init__(

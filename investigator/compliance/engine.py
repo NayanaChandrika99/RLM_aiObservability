@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 from investigator.inspection_api import PhoenixInspectionAPI
+from investigator.runtime.prompt_registry import get_prompt_definition
 from investigator.runtime.contracts import (
     ComplianceFinding,
     ComplianceReport,
@@ -27,12 +28,17 @@ class PolicyComplianceRequest:
     control_scope_override: list[str] | None = None
 
 
+_POLICY_COMPLIANCE_PROMPT_ID = "policy_compliance_judgment_v1"
+_POLICY_COMPLIANCE_PROMPT = get_prompt_definition(_POLICY_COMPLIANCE_PROMPT_ID)
+
+
 class PolicyComplianceEngine:
     engine_type = "policy_compliance"
     output_contract_name = "ComplianceReport"
     engine_version = "0.3.0"
+    model_provider = "openai"
     model_name = "gpt-5-mini"
-    prompt_template_hash = "policy-compliance-verdict-v1"
+    prompt_template_hash = _POLICY_COMPLIANCE_PROMPT.prompt_template_hash
     temperature = 0.0
 
     _SEVERITY_ORDER = {"critical": 4, "high": 3, "medium": 2, "low": 1}

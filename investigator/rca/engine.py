@@ -9,6 +9,15 @@ import re
 from typing import Any
 
 from investigator.inspection_api import PhoenixInspectionAPI
+from investigator.runtime.llm_client import (
+    ModelOutputInvalidError,
+    OpenAIModelClient,
+    RuntimeModelClient,
+    StructuredGenerationRequest,
+    StructuredGenerationUsage,
+)
+from investigator.runtime.llm_loop import run_structured_generation_loop
+from investigator.runtime.prompt_registry import PromptDefinition, get_prompt_definition
 from investigator.runtime.contracts import EvidenceRef, InputRef, RCAReport, TimeWindow, hash_excerpt
 
 
@@ -18,26 +27,59 @@ class TraceRCARequest:
     project_name: str
 
 
+_TRACE_RCA_PROMPT_ID = "rca_trace_judgment_v1"
+_TRACE_RCA_PROMPT_DEFINITION = get_prompt_definition(_TRACE_RCA_PROMPT_ID)
+_ALLOWED_RCA_LABELS = {
+    "retrieval_failure",
+    "tool_failure",
+    "instruction_failure",
+    "upstream_dependency_failure",
+    "data_schema_mismatch",
+}
+
+
 class TraceRCAEngine:
     engine_type = "rca"
     output_contract_name = "RCAReport"
     engine_version = "0.2.0"
+    model_provider = "openai"
     model_name = "gpt-5-mini"
-    prompt_template_hash = "trace-rca-hot-span-v1"
+    prompt_template_hash = _TRACE_RCA_PROMPT_DEFINITION.prompt_template_hash
     temperature = 0.0
 
     def __init__(
         self,
         inspection_api: Any | None = None,
+        model_client: RuntimeModelClient | None = None,
         *,
         max_hot_spans: int = 5,
         max_branch_depth: int = 2,
         max_branch_nodes: int = 30,
+        use_llm_judgment: bool = False,
     ) -> None:
         self._inspection_api = inspection_api
+        self._model_client = model_client
         self._max_hot_spans = max_hot_spans
         self._max_branch_depth = max_branch_depth
         self._max_branch_nodes = max_branch_nodes
+        self._use_llm_judgment = use_llm_judgment
+        self._prompt_definition: PromptDefinition = _TRACE_RCA_PROMPT_DEFINITION
+        self.prompt_template_hash = self._prompt_definition.prompt_template_hash
+        self._runtime_signals: dict[str, object] = {
+            "iterations": 1,
+            "depth_reached": 0,
+            "tool_calls": 0,
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "cost_usd": 0.0,
+            "model_provider": self.model_provider,
+        }
+        model_provider = str(getattr(self._model_client, "model_provider", "") or "").strip()
+        if model_provider:
+            self.model_provider = model_provider
+
+    def get_runtime_signals(self) -> dict[str, object]:
+        return dict(self._runtime_signals)
 
     def build_input_ref(self, request: TraceRCARequest) -> InputRef:
         return InputRef(
@@ -287,7 +329,123 @@ class TraceRCAEngine:
             gaps=[gap],
         )
 
+    def _resolve_model_client(self) -> RuntimeModelClient:
+        if self._model_client is None:
+            self._model_client = OpenAIModelClient()
+        return self._model_client
+
+    @staticmethod
+    def _evidence_dict(evidence: EvidenceRef) -> dict[str, Any]:
+        return {
+            "trace_id": evidence.trace_id,
+            "span_id": evidence.span_id,
+            "kind": evidence.kind,
+            "ref": evidence.ref,
+            "excerpt_hash": evidence.excerpt_hash,
+            "ts": evidence.ts,
+        }
+
+    @staticmethod
+    def _candidate_snapshot(candidate: dict[str, Any]) -> dict[str, Any]:
+        summary = candidate.get("summary") or {}
+        tool_io = candidate.get("tool_io")
+        retrieval_chunks = candidate.get("retrieval_chunks") or []
+        return {
+            "span_id": str(summary.get("span_id") or ""),
+            "name": str(summary.get("name") or ""),
+            "span_kind": str(summary.get("span_kind") or ""),
+            "status_code": str(summary.get("status_code") or ""),
+            "status_message": str(summary.get("status_message") or ""),
+            "latency_ms": float(summary.get("latency_ms") or 0.0),
+            "has_exception": bool(candidate.get("has_exception")),
+            "tool_error": (
+                isinstance(tool_io, dict)
+                and str(tool_io.get("status_code") or "").upper() == "ERROR"
+            ),
+            "retrieval_chunk_count": len(retrieval_chunks),
+        }
+
+    def _llm_rca_judgment(
+        self,
+        *,
+        request: TraceRCARequest,
+        hot_candidates: list[dict[str, Any]],
+        deterministic_label: str,
+        evidence_refs: list[EvidenceRef],
+    ) -> tuple[str, str, float, list[str], list[str]]:
+        prompt_payload = {
+            "trace_id": request.trace_id,
+            "deterministic_label_hint": deterministic_label,
+            "candidate_summaries": [
+                self._candidate_snapshot(candidate)
+                for candidate in hot_candidates[: self._max_hot_spans]
+            ],
+            "evidence_refs": [self._evidence_dict(ref) for ref in evidence_refs[:20]],
+        }
+        model_client = self._resolve_model_client()
+        model_provider = str(getattr(model_client, "model_provider", self.model_provider) or "openai")
+        request_payload = StructuredGenerationRequest(
+            model_provider=model_provider,
+            model_name=self.model_name,
+            temperature=self.temperature,
+            system_prompt=self._prompt_definition.prompt_text,
+            user_prompt=json.dumps(prompt_payload, sort_keys=True),
+            response_schema_name=self._prompt_definition.prompt_id,
+            response_schema=self._prompt_definition.response_schema,
+        )
+        try:
+            loop_result = run_structured_generation_loop(
+                client=model_client,
+                request=request_payload,
+            )
+        except ModelOutputInvalidError as exc:
+            usage = getattr(exc, "usage", None)
+            if isinstance(usage, StructuredGenerationUsage):
+                self._runtime_signals["tokens_in"] = int(usage.tokens_in)
+                self._runtime_signals["tokens_out"] = int(usage.tokens_out)
+                self._runtime_signals["cost_usd"] = float(usage.cost_usd)
+            self._runtime_signals["iterations"] = int(getattr(exc, "attempt_count", 1))
+            self._runtime_signals["model_provider"] = model_provider
+            raise
+        self._runtime_signals["iterations"] = max(1, int(loop_result.attempt_count))
+        self._runtime_signals["tokens_in"] = int(loop_result.usage.tokens_in)
+        self._runtime_signals["tokens_out"] = int(loop_result.usage.tokens_out)
+        self._runtime_signals["cost_usd"] = float(loop_result.usage.cost_usd)
+        self._runtime_signals["model_provider"] = model_provider
+
+        payload = loop_result.output
+        label_candidate = str(payload.get("primary_label") or "").strip()
+        label = label_candidate if label_candidate in _ALLOWED_RCA_LABELS else deterministic_label
+        summary = str(payload.get("summary") or "").strip()
+        if not summary:
+            summary = f"Structured RCA judgment selected label {label}."
+        confidence_raw = payload.get("confidence")
+        if isinstance(confidence_raw, (int, float)):
+            confidence = max(0.0, min(1.0, float(confidence_raw)))
+        else:
+            confidence = self._confidence_from_evidence(label, evidence_refs)
+        remediation_payload = payload.get("remediation")
+        remediation: list[str] = []
+        if isinstance(remediation_payload, list):
+            remediation = [str(item).strip() for item in remediation_payload if str(item).strip()]
+        if not remediation:
+            remediation = self._remediation_for_label(label)
+        gaps_payload = payload.get("gaps")
+        llm_gaps: list[str] = []
+        if isinstance(gaps_payload, list):
+            llm_gaps = [str(item).strip() for item in gaps_payload if str(item).strip()]
+        return label, summary, confidence, remediation, llm_gaps
+
     def run(self, request: TraceRCARequest) -> RCAReport:
+        self._runtime_signals = {
+            "iterations": 1,
+            "depth_reached": 0,
+            "tool_calls": 0,
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "cost_usd": 0.0,
+            "model_provider": self.model_provider,
+        }
         inspection_api = self._resolve_inspection_api(request)
         try:
             spans = inspection_api.list_spans(request.trace_id)
@@ -409,18 +567,32 @@ class TraceRCAEngine:
             )
             gaps.append("No evidence refs were produced from hot spans; fallback evidence was injected.")
 
+        self._runtime_signals["depth_reached"] = min(
+            self._max_branch_depth,
+            1 if recursive_candidates else 0,
+        )
         confidence = self._confidence_from_evidence(label, deduped)
         hot_span_ids = [str(candidate["summary"].get("span_id") or "") for candidate in hot_candidates]
         summary = (
             f"Deterministic narrowing and recursive branch inspection selected spans {hot_span_ids}; "
             f"RCA labeled trace as {label}."
         )
+        remediation = self._remediation_for_label(label)
+        if self._use_llm_judgment:
+            label, summary, confidence, remediation, llm_gaps = self._llm_rca_judgment(
+                request=request,
+                hot_candidates=hot_candidates,
+                deterministic_label=label,
+                evidence_refs=deduped,
+            )
+            if llm_gaps:
+                gaps.extend(llm_gaps)
         return RCAReport(
             trace_id=request.trace_id,
             primary_label=label,
             summary=summary,
             confidence=confidence,
             evidence_refs=deduped,
-            remediation=self._remediation_for_label(label),
+            remediation=remediation,
             gaps=gaps,
         )
