@@ -27,6 +27,10 @@ _PROMPT_PATHS = {
         "incident/incident_dossier_judgment_v1.md",
         "incident/incident_dossier_judgment_v1.schema.json",
     ),
+    "recursive_runtime_action_v1": (
+        "runtime/recursive_runtime_action_v1.md",
+        "runtime/recursive_runtime_action_v1.schema.json",
+    ),
 }
 
 

@@ -16,11 +16,18 @@ Visible outcome: one proof run where all three capabilities still pass schema/ev
 - [x] (2026-02-10 17:12Z) Created working branch `wip/phase9-aspirational-recursive-rlm`.
 - [x] (2026-02-10 17:22Z) Reviewed runtime contract/spec references and current runtime/engine implementations to map aspirational-vs-current gaps.
 - [x] (2026-02-10 17:30Z) Revised plan with explicit planner-prompt validation harness and recursive cost/call budget acceptance criteria.
-- [ ] Add shared recursive planner protocol that produces typed runtime actions from model output.
-- [ ] Wire RCA engine to execute through recursive runtime loop (tool-call planning + optional delegated label hypotheses).
-- [ ] Wire compliance engine to run per-control recursive evidence collection instead of pre-bulk evidence cataloging.
-- [ ] Wire incident engine to run per-trace recursive drilldown plus explicit cross-trace synthesis recursion.
-- [ ] Run full unit/integration-proof validation and update outcomes with artifact links.
+- [x] (2026-02-10 17:51Z) Added RED planner tests: planner action envelope handling + five-scenario planner harness (`tests/unit/test_runtime_recursive_planner_phase9.py`, `tests/unit/test_runtime_recursive_planner_scenarios_phase9.py`).
+- [x] (2026-02-10 17:51Z) Implemented shared planner protocol and prompt assets (`investigator/runtime/recursive_planner.py`, `investigator/prompts/runtime/recursive_runtime_action_v1.*`) and registered prompt id in `prompt_registry`.
+- [x] (2026-02-10 17:51Z) Extended `RecursiveLoop` planner path to consume planner usage envelopes (`tokens_in`, `tokens_out`, `cost_usd`) and enforce budget immediately after planner calls.
+- [x] (2026-02-10 17:51Z) Validated GREEN + regression: planner tests `6 passed`; runtime regression slice `13 passed`.
+- [x] (2026-02-10 17:55Z) Added RED RCA recursive wiring tests (`tests/unit/test_trace_rca_engine_phase9_recursive.py`) for trajectory/subcall metadata and budget-termination partial mapping.
+- [x] (2026-02-10 17:55Z) Wired RCA engine recursive path behind `use_recursive_runtime` with shared planner runtime (`TraceRCAEngine` + `RecursiveLoop` + `StructuredActionPlanner`).
+- [x] (2026-02-10 17:55Z) Verified RCA recursive wiring GREEN and regression slices: `5 passed` for recursive+phase8 llm tests, then `17 passed` across RCA/runtime planner slices.
+- [x] (2026-02-10 18:35Z) Added RED compliance recursive wiring tests (`tests/unit/test_compliance_phase9_recursive.py`) and wired per-control recursive planner loops behind `use_recursive_runtime`.
+- [x] (2026-02-10 18:35Z) Added RED incident recursive wiring tests (`tests/unit/test_incident_phase9_recursive.py`) and wired per-trace drilldown + cross-trace synthesis recursive loops behind `use_recursive_runtime`.
+- [x] (2026-02-10 18:35Z) Validated engine migrations with focused slices: compliance `12 passed`; incident `9 passed`; consolidated runtime+engine slice `50 passed`.
+- [x] (2026-02-10 18:35Z) Ran full suite `uv run pytest tests/ -q -rs`: `104 passed`, `2 skipped` (live writeback tests gated by env flags).
+- [x] (2026-02-10 18:35Z) Ran proof gate `PHOENIX_WORKING_DIR=.phoenix_data PHASE9_MAX_COST_USD=1.25 uv run python -m investigator.proof.run_phase7_proof`: gates `all_passed=true`; report at `artifacts/proof_runs/phase7-proof-20260210T183448Z/proof_report.json`.
 
 ## Surprises & Discoveries
 
@@ -32,6 +39,14 @@ Visible outcome: one proof run where all three capabilities still pass schema/ev
   Evidence: `investigator/runtime/contracts.py` and `investigator/runtime/runner.py`.
 - Observation: Recursive planner migration will increase model-call volume materially relative to Phase 8 single-turn judgment paths.
   Evidence: current engines execute one structured generation call per judgment path, while Phase 9 introduces iterative planning + per-objective subcalls.
+- Observation: Planner usage accounting must be applied before action execution, or cost/token caps can be bypassed by one extra action after an over-budget planner turn.
+  Evidence: `RecursiveLoop` now enforces `_budget_reason(...)` immediately after planner usage envelope application.
+- Observation: Recursive RCA wiring can retain deterministic fallback semantics while still emitting budget/trajectory metadata for partial mapping.
+  Evidence: recursive RCA path sets `runtime_state`, `budget_reason`, `state_trajectory`, and `subcall_metadata` from `RecursiveLoopResult`, enabling `run_engine` partial mapping on `terminated_budget`.
+- Observation: Cross-trace recursive synthesis planner input must be JSON-safe; passing raw `EvidenceRef` objects breaks planner context serialization.
+  Evidence: incident recursive synthesis initially failed with `Object of type EvidenceRef is not JSON serializable` until planner seed conversion to plain dicts.
+- Observation: Proof-gate execution requires live Phoenix on `http://127.0.0.1:6006`; proof runner hard-fails fast when endpoint is unavailable.
+  Evidence: initial proof run failed with `ConnectionRefusedError` before Phoenix server startup; rerun with Phoenix running succeeded.
 
 ## Decision Log
 
@@ -53,7 +68,7 @@ Visible outcome: one proof run where all three capabilities still pass schema/ev
 
 ## Outcomes & Retrospective
 
-Implementation not started yet. Phase starts from a clean branch with Phase 8 complete and validated. The main risk is regressions in proof thresholds during migration from single-turn judgment to iterative tool-driven recursion.
+Phase 9 is complete. All three engines now expose recursive planner-driven execution behind `use_recursive_runtime` while preserving deterministic fallback toggles. Runtime artifacts capture recursive state trajectory, subcall metadata, and budget-state mapping across RCA/compliance/incident paths. Full test suite and proof gate both passed with recursive paths enabled.
 
 ## Context and Orientation
 

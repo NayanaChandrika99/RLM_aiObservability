@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["action"],
+  "properties": {
+    "action": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["tool_call", "delegate_subcall", "synthesize", "finalize"]
+        },
+        "tool_name": {"type": "string"},
+        "args": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "objective": {"type": "string"},
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["tool_call", "delegate_subcall", "synthesize", "finalize"]
+              },
+              "tool_name": {"type": "string"},
+              "args": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "objective": {"type": "string"},
+              "actions": {
+                "type": "array",
+                "items": {"type": "object"}
+              },
+              "output": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "fatal": {"type": "boolean"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "output": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "fatal": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

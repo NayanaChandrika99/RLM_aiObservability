@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import time
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 from uuid import uuid4
 
 from investigator.runtime.contracts import RuntimeBudget, RuntimeUsage, utc_now_rfc3339
@@ -64,6 +64,24 @@ class RuntimeStateMachine:
             raise StateTransitionError(f"Invalid transition: {self._state} -> {next_state}.")
         self._state = next_state
         self._trajectory.append(next_state)
+
+
+def _parse_non_negative_int(value: Any, *, field_name: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be an integer >= 0.")
+    parsed = int(value)
+    if parsed < 0:
+        raise ValueError(f"{field_name} must be an integer >= 0.")
+    return parsed
+
+
+def _parse_non_negative_float(value: Any, *, field_name: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a number >= 0.")
+    parsed = float(value)
+    if parsed < 0:
+        raise ValueError(f"{field_name} must be a number >= 0.")
+    return parsed
 
 
 @dataclass
@@ -141,6 +159,7 @@ class RecursiveLoop:
         *,
         actions: list[dict[str, Any]],
         budget: RuntimeBudget,
+        planner: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
         depth: int = 0,
         objective: str = "root",
         parent_call_id: str = "root",
@@ -156,7 +175,7 @@ class RecursiveLoop:
         machine.transition("planning")
         queue = [dict(action) for action in actions]
 
-        while queue:
+        while queue or planner is not None:
             reason = self._budget_reason(
                 budget=budget,
                 usage=usage,
@@ -174,6 +193,129 @@ class RecursiveLoop:
                     state_trajectory=machine.trajectory,
                     budget_reason=reason,
                 )
+
+            if not queue and planner is not None:
+                planner_context = {
+                    "objective": objective,
+                    "parent_call_id": parent_call_id,
+                    "depth": depth,
+                    "input_ref_hash": input_ref_hash,
+                    "state": machine.state,
+                    "allowed_tools": sorted(self._tool_registry.allowed_tools),
+                    "budget": {
+                        "max_iterations": budget.max_iterations,
+                        "max_depth": budget.max_depth,
+                        "max_tool_calls": budget.max_tool_calls,
+                        "max_subcalls": budget.max_subcalls,
+                        "max_tokens_total": budget.max_tokens_total,
+                        "max_cost_usd": budget.max_cost_usd,
+                        "sampling_seed": budget.sampling_seed,
+                        "max_wall_time_sec": budget.max_wall_time_sec,
+                    },
+                    "usage": {
+                        "iterations": usage.iterations,
+                        "depth_reached": usage.depth_reached,
+                        "tool_calls": usage.tool_calls,
+                        "tokens_in": usage.tokens_in,
+                        "tokens_out": usage.tokens_out,
+                        "cost_usd": usage.cost_usd,
+                    },
+                    "subcall_count": len(subcall_metadata),
+                    "draft_output": dict(draft_output),
+                }
+                try:
+                    planned_action = planner(planner_context)
+                except Exception as exc:
+                    machine.transition("failed")
+                    return RecursiveLoopResult(
+                        status="failed",
+                        output=draft_output or None,
+                        usage=usage,
+                        subcall_metadata=subcall_metadata,
+                        state_trajectory=machine.trajectory,
+                        error_code="MODEL_OUTPUT_INVALID",
+                        error_message=f"planner action generation failed: {exc}",
+                    )
+                planner_usage: dict[str, Any] | None = None
+                if isinstance(planned_action, dict) and "action" in planned_action:
+                    envelope_usage = planned_action.get("usage")
+                    if envelope_usage is not None and not isinstance(envelope_usage, dict):
+                        machine.transition("failed")
+                        return RecursiveLoopResult(
+                            status="failed",
+                            output=draft_output or None,
+                            usage=usage,
+                            subcall_metadata=subcall_metadata,
+                            state_trajectory=machine.trajectory,
+                            error_code="MODEL_OUTPUT_INVALID",
+                            error_message="planner usage must be an object when provided.",
+                        )
+                    planned_action = planned_action.get("action")
+                    planner_usage = envelope_usage
+                if planner_usage is not None:
+                    try:
+                        usage.tokens_in += _parse_non_negative_int(
+                            planner_usage.get("tokens_in", 0),
+                            field_name="planner usage tokens_in",
+                        )
+                        usage.tokens_out += _parse_non_negative_int(
+                            planner_usage.get("tokens_out", 0),
+                            field_name="planner usage tokens_out",
+                        )
+                        usage.cost_usd += _parse_non_negative_float(
+                            planner_usage.get("cost_usd", 0.0),
+                            field_name="planner usage cost_usd",
+                        )
+                    except (TypeError, ValueError) as exc:
+                        machine.transition("failed")
+                        return RecursiveLoopResult(
+                            status="failed",
+                            output=draft_output or None,
+                            usage=usage,
+                            subcall_metadata=subcall_metadata,
+                            state_trajectory=machine.trajectory,
+                            error_code="MODEL_OUTPUT_INVALID",
+                            error_message=f"planner usage invalid: {exc}",
+                        )
+                    reason_after_planning = self._budget_reason(
+                        budget=budget,
+                        usage=usage,
+                        subcall_count=len(subcall_metadata),
+                        depth=depth,
+                        start_monotonic=started,
+                    )
+                    if reason_after_planning:
+                        machine.transition("terminated_budget")
+                        return RecursiveLoopResult(
+                            status="terminated_budget",
+                            output=draft_output or None,
+                            usage=usage,
+                            subcall_metadata=subcall_metadata,
+                            state_trajectory=machine.trajectory,
+                            budget_reason=reason_after_planning,
+                        )
+                if planned_action is None:
+                    machine.transition("finalizing")
+                    machine.transition("completed")
+                    return RecursiveLoopResult(
+                        status="completed",
+                        output=draft_output or {},
+                        usage=usage,
+                        subcall_metadata=subcall_metadata,
+                        state_trajectory=machine.trajectory,
+                    )
+                if not isinstance(planned_action, dict):
+                    machine.transition("failed")
+                    return RecursiveLoopResult(
+                        status="failed",
+                        output=draft_output or None,
+                        usage=usage,
+                        subcall_metadata=subcall_metadata,
+                        state_trajectory=machine.trajectory,
+                        error_code="MODEL_OUTPUT_INVALID",
+                        error_message="planner must return an action object.",
+                    )
+                queue.append(dict(planned_action))
 
             action = queue.pop(0)
             try:

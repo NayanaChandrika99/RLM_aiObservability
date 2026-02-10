@@ -17,6 +17,10 @@ from investigator.runtime.llm_client import (
 )
 from investigator.runtime.llm_loop import run_structured_generation_loop
 from investigator.runtime.prompt_registry import PromptDefinition, get_prompt_definition
+from investigator.runtime.recursive_loop import RecursiveLoop, RecursiveLoopResult
+from investigator.runtime.recursive_planner import StructuredActionPlanner
+from investigator.runtime.sandbox import SandboxGuard
+from investigator.runtime.tool_registry import ToolRegistry
 from investigator.runtime.contracts import (
     EvidenceRef,
     IncidentDossier,
@@ -25,6 +29,7 @@ from investigator.runtime.contracts import (
     InputRef,
     RecommendedAction,
     RepresentativeTrace,
+    RuntimeBudget,
     SuspectedChange,
     TimeWindow,
     hash_excerpt,
@@ -42,6 +47,7 @@ class IncidentDossierRequest:
 
 _INCIDENT_PROMPT_ID = "incident_dossier_judgment_v1"
 _INCIDENT_PROMPT = get_prompt_definition(_INCIDENT_PROMPT_ID)
+_RECURSIVE_INCIDENT_PROMPT_ID = "recursive_runtime_action_v1"
 _ALLOWED_ACTION_PRIORITIES = {"P0", "P1", "P2"}
 _ALLOWED_ACTION_TYPES = {"mitigation", "follow_up_fix"}
 
@@ -66,6 +72,8 @@ class IncidentDossierEngine:
         cluster_quota: int = 2,
         max_prompt_timeline_events: int = 6,
         use_llm_judgment: bool = False,
+        use_recursive_runtime: bool = False,
+        recursive_budget: RuntimeBudget | None = None,
         fallback_on_llm_error: bool = False,
     ) -> None:
         self._inspection_api = inspection_api
@@ -76,8 +84,18 @@ class IncidentDossierEngine:
         self._cluster_quota = cluster_quota
         self._max_prompt_timeline_events = max_prompt_timeline_events
         self._use_llm_judgment = use_llm_judgment
+        self._use_recursive_runtime = use_recursive_runtime
+        self._recursive_budget = recursive_budget or RuntimeBudget(
+            max_iterations=50,
+            max_depth=2,
+            max_tool_calls=220,
+            max_subcalls=90,
+            max_tokens_total=320000,
+        )
         self._fallback_on_llm_error = fallback_on_llm_error
         self._prompt_definition: PromptDefinition = _INCIDENT_PROMPT
+        if self._use_llm_judgment and self._use_recursive_runtime:
+            self._prompt_definition = get_prompt_definition(_RECURSIVE_INCIDENT_PROMPT_ID)
         self.prompt_template_hash = self._prompt_definition.prompt_template_hash
         model_provider = str(getattr(self._model_client, "model_provider", "") or "").strip()
         if model_provider:
@@ -95,6 +113,11 @@ class IncidentDossierEngine:
             "cost_usd": 0.0,
             "model_provider": self.model_provider,
             "incident_judgment_mode": "deterministic",
+            "runtime_state": "completed",
+            "budget_reason": "",
+            "state_trajectory": [],
+            "subcall_metadata": [],
+            "subcalls": 0,
         }
 
     def get_runtime_signals(self) -> dict[str, object]:
@@ -621,15 +644,21 @@ class IncidentDossierEngine:
     ) -> None:
         llm_used = bool(runtime_tracker.get("llm_used"))
         fallback_used = bool(runtime_tracker.get("fallback_used"))
+        recursive_used = bool(runtime_tracker.get("recursive_used"))
         if fallback_used:
             mode = "deterministic_fallback"
+        elif recursive_used:
+            mode = "recursive_llm"
         elif llm_used:
             mode = "llm"
         else:
             mode = "deterministic"
         self._runtime_signals["iterations"] = max(1, int(runtime_tracker.get("attempts") or 1))
-        self._runtime_signals["depth_reached"] = 0
-        self._runtime_signals["tool_calls"] = int(runtime_tracker.get("llm_calls") or 0)
+        self._runtime_signals["depth_reached"] = int(runtime_tracker.get("depth_reached") or 0)
+        if recursive_used:
+            self._runtime_signals["tool_calls"] = int(runtime_tracker.get("tool_calls") or 0)
+        else:
+            self._runtime_signals["tool_calls"] = int(runtime_tracker.get("llm_calls") or 0)
         self._runtime_signals["tokens_in"] = int(usage_total.tokens_in)
         self._runtime_signals["tokens_out"] = int(usage_total.tokens_out)
         self._runtime_signals["cost_usd"] = float(usage_total.cost_usd)
@@ -637,6 +666,294 @@ class IncidentDossierEngine:
             runtime_tracker.get("model_provider") or self.model_provider
         )
         self._runtime_signals["incident_judgment_mode"] = mode
+        self._runtime_signals["runtime_state"] = str(runtime_tracker.get("runtime_state") or "completed")
+        self._runtime_signals["budget_reason"] = str(runtime_tracker.get("budget_reason") or "")
+        raw_trajectory = runtime_tracker.get("state_trajectory") or []
+        self._runtime_signals["state_trajectory"] = [
+            str(item) for item in raw_trajectory if str(item).strip()
+        ]
+        raw_subcall_metadata = runtime_tracker.get("subcall_metadata") or []
+        subcall_metadata = [item for item in raw_subcall_metadata if isinstance(item, dict)]
+        self._runtime_signals["subcall_metadata"] = subcall_metadata
+        self._runtime_signals["subcalls"] = len(subcall_metadata)
+        sandbox_violations = runtime_tracker.get("sandbox_violations") or []
+        if sandbox_violations:
+            self._runtime_signals["sandbox_violations"] = [
+                str(item) for item in sandbox_violations if str(item).strip()
+            ]
+
+    @staticmethod
+    def _merge_recursive_loop_result(
+        runtime_tracker: dict[str, Any],
+        loop_result: RecursiveLoopResult,
+    ) -> None:
+        runtime_tracker["attempts"] = int(runtime_tracker.get("attempts") or 0) + max(
+            1, int(loop_result.usage.iterations)
+        )
+        runtime_tracker["tool_calls"] = int(runtime_tracker.get("tool_calls") or 0) + int(
+            loop_result.usage.tool_calls
+        )
+        runtime_tracker["depth_reached"] = max(
+            int(runtime_tracker.get("depth_reached") or 0),
+            int(loop_result.usage.depth_reached),
+        )
+        runtime_tracker.setdefault("state_trajectory", []).extend(loop_result.state_trajectory)
+        runtime_tracker.setdefault("subcall_metadata", []).extend(loop_result.subcall_metadata)
+        if loop_result.status == "terminated_budget":
+            runtime_tracker["runtime_state"] = "terminated_budget"
+            if not runtime_tracker.get("budget_reason"):
+                runtime_tracker["budget_reason"] = str(loop_result.budget_reason or "")
+        if loop_result.status == "failed":
+            runtime_tracker["runtime_state"] = "failed"
+            if loop_result.error_code == "SANDBOX_VIOLATION":
+                runtime_tracker.setdefault("sandbox_violations", []).append(
+                    str(loop_result.error_message or "")
+                )
+
+    def _recursive_trace_synthesis(
+        self,
+        *,
+        request: IncidentDossierRequest,
+        profile: dict[str, Any],
+        representative_trace: RepresentativeTrace,
+        timeline: list[IncidentTimelineEvent],
+        suspected_change: SuspectedChange,
+        runtime_tracker: dict[str, Any],
+        usage_total: StructuredGenerationUsage,
+    ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]], list[str], float]:
+        model_client = self._resolve_model_client()
+        model_provider = str(getattr(model_client, "model_provider", self.model_provider) or "openai")
+        planner = StructuredActionPlanner(
+            client=model_client,
+            model_name=self.model_name,
+            temperature=self.temperature,
+            prompt_id=_RECURSIVE_INCIDENT_PROMPT_ID,
+        )
+        self.prompt_template_hash = planner.prompt_template_hash
+        runtime_tracker["recursive_used"] = True
+        runtime_tracker["llm_used"] = True
+        runtime_tracker["model_provider"] = model_provider
+
+        timeline_snapshot = [
+            {
+                "timestamp": item.timestamp,
+                "event": item.event,
+                "evidence_refs": [self._evidence_dict(ref) for ref in item.evidence_refs[:3]],
+            }
+            for item in sorted(timeline, key=lambda row: row.timestamp)[: self._max_prompt_timeline_events]
+        ]
+        planner_seed = {
+            "engine_type": self.engine_type,
+            "incident_scope": "per_trace_drilldown",
+            "project_name": request.project_name,
+            "incident_window": {
+                "start": request.time_window_start,
+                "end": request.time_window_end,
+            },
+            "representative_trace": {
+                "trace_id": representative_trace.trace_id,
+                "why_selected": representative_trace.why_selected,
+                "profile": {
+                    "bucket": str(profile.get("bucket") or ""),
+                    "error_spans": int(profile.get("error_spans") or 0),
+                    "latency_ms": float(profile.get("latency_ms") or 0.0),
+                    "signature": profile.get("signature"),
+                },
+                "evidence_refs": [
+                    self._evidence_dict(ref) for ref in representative_trace.evidence_refs[:5]
+                ],
+            },
+            "suspected_change": {
+                "change_type": suspected_change.change_type,
+                "change_ref": suspected_change.change_ref,
+                "diff_ref": suspected_change.diff_ref,
+                "summary": suspected_change.summary,
+                "evidence_refs": [self._evidence_dict(ref) for ref in suspected_change.evidence_refs[:3]],
+            },
+            "timeline": timeline_snapshot,
+        }
+
+        def _planner(context: dict[str, Any]) -> dict[str, Any]:
+            merged_context = dict(context)
+            merged_context.update(planner_seed)
+            return planner(merged_context)
+
+        tool_registry = ToolRegistry(inspection_api=self._inspection_api or self._resolve_inspection_api(request))
+        sandbox_guard = SandboxGuard(allowed_tools=tool_registry.allowed_tools)
+        recursive_loop = RecursiveLoop(tool_registry=tool_registry, sandbox_guard=sandbox_guard)
+        loop_result = recursive_loop.run(
+            actions=[],
+            planner=_planner,
+            budget=self._recursive_budget,
+            objective=f"incident per-trace drilldown trace={representative_trace.trace_id}",
+            parent_call_id=f"incident:trace:{representative_trace.trace_id}",
+            input_ref_hash=hash_excerpt(representative_trace.trace_id),
+        )
+        usage_total.add(
+            StructuredGenerationUsage(
+                tokens_in=int(loop_result.usage.tokens_in),
+                tokens_out=int(loop_result.usage.tokens_out),
+                cost_usd=float(loop_result.usage.cost_usd),
+            )
+        )
+        self._merge_recursive_loop_result(runtime_tracker, loop_result)
+
+        if loop_result.status == "failed":
+            if loop_result.error_code == "MODEL_OUTPUT_INVALID":
+                raise ModelOutputInvalidError(
+                    loop_result.error_message or "Recursive incident planner output was invalid."
+                )
+            raise RuntimeError(loop_result.error_message or "Recursive incident trace drilldown failed.")
+
+        payload = loop_result.output if isinstance(loop_result.output, dict) else {}
+        summary = str(payload.get("incident_summary") or "").strip()
+        hypotheses_payload = payload.get("hypotheses")
+        actions_payload = payload.get("recommended_actions")
+        gaps_payload = payload.get("gaps")
+        confidence = self._coerce_confidence(payload.get("confidence"), default=0.6)
+        hypotheses = hypotheses_payload if isinstance(hypotheses_payload, list) else []
+        actions = actions_payload if isinstance(actions_payload, list) else []
+        llm_gaps = [str(item).strip() for item in gaps_payload or [] if str(item).strip()]
+        if loop_result.status == "terminated_budget":
+            llm_gaps.append(
+                loop_result.budget_reason
+                or f"Per-trace recursive budget reached for trace {representative_trace.trace_id}."
+            )
+        return (
+            summary,
+            [item for item in hypotheses if isinstance(item, dict)],
+            [item for item in actions if isinstance(item, dict)],
+            llm_gaps,
+            confidence,
+        )
+
+    def _recursive_cross_trace_synthesis(
+        self,
+        *,
+        request: IncidentDossierRequest,
+        representative_profiles: list[dict[str, Any]],
+        raw_hypotheses: list[dict[str, Any]],
+        raw_actions: list[dict[str, Any]],
+        runtime_tracker: dict[str, Any],
+        usage_total: StructuredGenerationUsage,
+    ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]], list[str], float]:
+        model_client = self._resolve_model_client()
+        model_provider = str(getattr(model_client, "model_provider", self.model_provider) or "openai")
+        planner = StructuredActionPlanner(
+            client=model_client,
+            model_name=self.model_name,
+            temperature=self.temperature,
+            prompt_id=_RECURSIVE_INCIDENT_PROMPT_ID,
+        )
+        self.prompt_template_hash = planner.prompt_template_hash
+        runtime_tracker["recursive_used"] = True
+        runtime_tracker["llm_used"] = True
+        runtime_tracker["model_provider"] = model_provider
+
+        representative_snapshot = [
+            {
+                "trace_id": str(profile.get("trace_id") or ""),
+                "bucket": str(profile.get("bucket") or ""),
+                "error_spans": int(profile.get("error_spans") or 0),
+                "latency_ms": float(profile.get("latency_ms") or 0.0),
+                "signature": profile.get("signature"),
+            }
+            for profile in representative_profiles
+        ]
+        normalized_hypotheses: list[dict[str, Any]] = []
+        for item in raw_hypotheses[:20]:
+            if not isinstance(item, dict):
+                continue
+            evidence_refs: list[dict[str, Any]] = []
+            for evidence in item.get("evidence_refs") or []:
+                if isinstance(evidence, EvidenceRef):
+                    evidence_refs.append(self._evidence_dict(evidence))
+                elif isinstance(evidence, dict):
+                    evidence_refs.append({str(key): evidence[key] for key in evidence})
+            normalized_hypotheses.append(
+                {
+                    "statement": str(item.get("statement") or ""),
+                    "confidence": self._coerce_confidence(item.get("confidence"), default=0.6),
+                    "evidence_refs": evidence_refs,
+                }
+            )
+        normalized_actions: list[dict[str, Any]] = []
+        for item in raw_actions[:20]:
+            if not isinstance(item, dict):
+                continue
+            normalized_actions.append(
+                {
+                    "priority": self._coerce_action_priority(item.get("priority")),
+                    "type": self._coerce_action_type(item.get("type")),
+                    "action": str(item.get("action") or ""),
+                }
+            )
+        planner_seed = {
+            "engine_type": self.engine_type,
+            "incident_scope": "cross_trace_synthesis",
+            "project_name": request.project_name,
+            "incident_window": {
+                "start": request.time_window_start,
+                "end": request.time_window_end,
+            },
+            "representative_profiles": representative_snapshot,
+            "trace_hypotheses": normalized_hypotheses,
+            "trace_actions": normalized_actions,
+        }
+
+        def _planner(context: dict[str, Any]) -> dict[str, Any]:
+            merged_context = dict(context)
+            merged_context.update(planner_seed)
+            return planner(merged_context)
+
+        tool_registry = ToolRegistry(inspection_api=self._inspection_api or self._resolve_inspection_api(request))
+        sandbox_guard = SandboxGuard(allowed_tools=tool_registry.allowed_tools)
+        recursive_loop = RecursiveLoop(tool_registry=tool_registry, sandbox_guard=sandbox_guard)
+        loop_result = recursive_loop.run(
+            actions=[],
+            planner=_planner,
+            budget=self._recursive_budget,
+            objective="incident cross-trace synthesis",
+            parent_call_id="incident:cross-trace",
+            input_ref_hash=hash_excerpt(f"{request.project_name}:{request.time_window_start}:{request.time_window_end}"),
+        )
+        usage_total.add(
+            StructuredGenerationUsage(
+                tokens_in=int(loop_result.usage.tokens_in),
+                tokens_out=int(loop_result.usage.tokens_out),
+                cost_usd=float(loop_result.usage.cost_usd),
+            )
+        )
+        self._merge_recursive_loop_result(runtime_tracker, loop_result)
+
+        if loop_result.status == "failed":
+            if loop_result.error_code == "MODEL_OUTPUT_INVALID":
+                raise ModelOutputInvalidError(
+                    loop_result.error_message or "Recursive incident cross-trace synthesis was invalid."
+                )
+            raise RuntimeError(loop_result.error_message or "Recursive incident cross-trace synthesis failed.")
+
+        payload = loop_result.output if isinstance(loop_result.output, dict) else {}
+        summary = str(payload.get("incident_summary") or "").strip()
+        hypotheses_payload = payload.get("hypotheses")
+        actions_payload = payload.get("recommended_actions")
+        gaps_payload = payload.get("gaps")
+        confidence = self._coerce_confidence(payload.get("confidence"), default=0.65)
+        hypotheses = hypotheses_payload if isinstance(hypotheses_payload, list) else []
+        actions = actions_payload if isinstance(actions_payload, list) else []
+        llm_gaps = [str(item).strip() for item in gaps_payload or [] if str(item).strip()]
+        if loop_result.status == "terminated_budget":
+            llm_gaps.append(
+                loop_result.budget_reason
+                or "Cross-trace recursive synthesis reached a budget limit."
+            )
+        return (
+            summary,
+            [item for item in hypotheses if isinstance(item, dict)],
+            [item for item in actions if isinstance(item, dict)],
+            llm_gaps,
+            confidence,
+        )
 
     def run(self, request: IncidentDossierRequest) -> IncidentDossier:
         self._reset_runtime_signals()
@@ -646,7 +963,15 @@ class IncidentDossierEngine:
             "llm_calls": 0,
             "llm_used": False,
             "fallback_used": False,
+            "recursive_used": False,
             "model_provider": self.model_provider,
+            "tool_calls": 0,
+            "depth_reached": 0,
+            "runtime_state": "completed",
+            "budget_reason": "",
+            "state_trajectory": [],
+            "subcall_metadata": [],
+            "sandbox_violations": [],
         }
 
         inspection_api = self._resolve_inspection_api(request)
@@ -813,30 +1138,47 @@ class IncidentDossierEngine:
                 llm_confidences: list[float] = []
 
                 for profile, representative_trace in zip(representative_profiles, representative_traces):
-                    runtime_tracker["llm_calls"] = int(runtime_tracker.get("llm_calls") or 0) + 1
                     try:
-                        (
-                            trace_summary,
-                            trace_hypotheses,
-                            trace_actions,
-                            trace_gaps,
-                            trace_confidence,
-                            attempt_count,
-                            usage,
-                            model_provider,
-                        ) = self._llm_trace_synthesis(
-                            request=request,
-                            profile=profile,
-                            representative_trace=representative_trace,
-                            timeline=timeline,
-                            suspected_change=suspected_change,
-                        )
-                        runtime_tracker["attempts"] = int(runtime_tracker.get("attempts") or 0) + max(
-                            1, int(attempt_count)
-                        )
-                        usage_total.add(usage)
-                        runtime_tracker["llm_used"] = True
-                        runtime_tracker["model_provider"] = model_provider
+                        if self._use_recursive_runtime:
+                            (
+                                trace_summary,
+                                trace_hypotheses,
+                                trace_actions,
+                                trace_gaps,
+                                trace_confidence,
+                            ) = self._recursive_trace_synthesis(
+                                request=request,
+                                profile=profile,
+                                representative_trace=representative_trace,
+                                timeline=timeline,
+                                suspected_change=suspected_change,
+                                runtime_tracker=runtime_tracker,
+                                usage_total=usage_total,
+                            )
+                        else:
+                            runtime_tracker["llm_calls"] = int(runtime_tracker.get("llm_calls") or 0) + 1
+                            (
+                                trace_summary,
+                                trace_hypotheses,
+                                trace_actions,
+                                trace_gaps,
+                                trace_confidence,
+                                attempt_count,
+                                usage,
+                                model_provider,
+                            ) = self._llm_trace_synthesis(
+                                request=request,
+                                profile=profile,
+                                representative_trace=representative_trace,
+                                timeline=timeline,
+                                suspected_change=suspected_change,
+                            )
+                            runtime_tracker["attempts"] = int(runtime_tracker.get("attempts") or 0) + max(
+                                1, int(attempt_count)
+                            )
+                            usage_total.add(usage)
+                            runtime_tracker["llm_used"] = True
+                            runtime_tracker["model_provider"] = model_provider
                         if trace_summary:
                             llm_summaries.append(trace_summary)
                         llm_confidences.append(trace_confidence)
@@ -872,22 +1214,84 @@ class IncidentDossierEngine:
                                 }
                             )
                     except ModelOutputInvalidError as exc:
-                        runtime_tracker["attempts"] = int(runtime_tracker.get("attempts") or 0) + int(
-                            getattr(exc, "attempt_count", 1) or 1
-                        )
-                        usage = getattr(exc, "usage", None)
-                        if isinstance(usage, StructuredGenerationUsage):
-                            usage_total.add(usage)
-                        runtime_tracker["model_provider"] = str(
-                            getattr(self._model_client, "model_provider", self.model_provider)
-                            or self.model_provider
-                        )
+                        if self._use_recursive_runtime:
+                            runtime_tracker["attempts"] = int(runtime_tracker.get("attempts") or 0) + 1
+                        else:
+                            runtime_tracker["attempts"] = int(runtime_tracker.get("attempts") or 0) + int(
+                                getattr(exc, "attempt_count", 1) or 1
+                            )
+                            usage = getattr(exc, "usage", None)
+                            if isinstance(usage, StructuredGenerationUsage):
+                                usage_total.add(usage)
+                            runtime_tracker["model_provider"] = str(
+                                getattr(self._model_client, "model_provider", self.model_provider)
+                                or self.model_provider
+                            )
                         if not self._fallback_on_llm_error:
                             raise
                         runtime_tracker["fallback_used"] = True
                         gaps.append(
                             "LLM incident synthesis failed for representative trace "
                             f"{representative_trace.trace_id}; deterministic fallback was used: {exc}"
+                        )
+
+                if self._use_recursive_runtime:
+                    try:
+                        (
+                            cross_summary,
+                            cross_hypotheses,
+                            cross_actions,
+                            cross_gaps,
+                            cross_confidence,
+                        ) = self._recursive_cross_trace_synthesis(
+                            request=request,
+                            representative_profiles=representative_profiles,
+                            raw_hypotheses=raw_hypotheses,
+                            raw_actions=raw_actions,
+                            runtime_tracker=runtime_tracker,
+                            usage_total=usage_total,
+                        )
+                        if cross_summary:
+                            llm_summaries.append(cross_summary)
+                        llm_confidences.append(cross_confidence)
+                        if cross_gaps:
+                            gaps.extend(cross_gaps)
+                        cross_evidence = self._dedupe_evidence_refs(
+                            list(representative_traces[0].evidence_refs)
+                            + list(suspected_change.evidence_refs)
+                        )
+                        for item in cross_hypotheses:
+                            statement = str(item.get("statement") or "").strip()
+                            if not statement:
+                                continue
+                            raw_hypotheses.append(
+                                {
+                                    "statement": statement,
+                                    "confidence": self._coerce_confidence(
+                                        item.get("confidence"),
+                                        default=cross_confidence,
+                                    ),
+                                    "evidence_refs": cross_evidence,
+                                }
+                            )
+                        for item in cross_actions:
+                            action_text = str(item.get("action") or "").strip()
+                            if not action_text:
+                                continue
+                            raw_actions.append(
+                                {
+                                    "priority": self._coerce_action_priority(item.get("priority")),
+                                    "type": self._coerce_action_type(item.get("type")),
+                                    "action": action_text,
+                                }
+                            )
+                    except ModelOutputInvalidError as exc:
+                        if not self._fallback_on_llm_error:
+                            raise
+                        runtime_tracker["fallback_used"] = True
+                        gaps.append(
+                            "LLM incident cross-trace synthesis failed; deterministic fallback was used: "
+                            f"{exc}"
                         )
 
                 if raw_hypotheses:
@@ -946,7 +1350,13 @@ class IncidentDossierEngine:
                     actions = normalized_actions or [deterministic_action]
 
                 if llm_summaries:
-                    selected_summaries = [item for item in llm_summaries if item][:2]
+                    cleaned_summaries = [item for item in llm_summaries if item]
+                    if self._use_recursive_runtime and cleaned_summaries:
+                        selected_summaries = [cleaned_summaries[-1]]
+                        if len(cleaned_summaries) > 1:
+                            selected_summaries.insert(0, cleaned_summaries[0])
+                    else:
+                        selected_summaries = cleaned_summaries[:2]
                     if selected_summaries:
                         summary = f"{summary} LLM synthesis: {' | '.join(selected_summaries)}"
                 if llm_confidences:

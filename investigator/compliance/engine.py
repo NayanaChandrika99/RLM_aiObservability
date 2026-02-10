@@ -18,11 +18,16 @@ from investigator.runtime.llm_client import (
 )
 from investigator.runtime.llm_loop import run_structured_generation_loop
 from investigator.runtime.prompt_registry import PromptDefinition, get_prompt_definition
+from investigator.runtime.recursive_loop import RecursiveLoop, RecursiveLoopResult
+from investigator.runtime.recursive_planner import StructuredActionPlanner
+from investigator.runtime.sandbox import SandboxGuard
+from investigator.runtime.tool_registry import ToolRegistry
 from investigator.runtime.contracts import (
     ComplianceFinding,
     ComplianceReport,
     EvidenceRef,
     InputRef,
+    RuntimeBudget,
     TimeWindow,
     hash_excerpt,
 )
@@ -38,6 +43,7 @@ class PolicyComplianceRequest:
 
 _POLICY_COMPLIANCE_PROMPT_ID = "policy_compliance_judgment_v1"
 _POLICY_COMPLIANCE_PROMPT = get_prompt_definition(_POLICY_COMPLIANCE_PROMPT_ID)
+_RECURSIVE_COMPLIANCE_PROMPT_ID = "recursive_runtime_action_v1"
 _ALLOWED_CONTROL_VERDICTS = {"pass", "fail", "not_applicable", "insufficient_evidence"}
 
 
@@ -60,6 +66,8 @@ class PolicyComplianceEngine:
         max_controls: int = 50,
         max_prompt_records: int = 20,
         use_llm_judgment: bool = False,
+        use_recursive_runtime: bool = False,
+        recursive_budget: RuntimeBudget | None = None,
         fallback_on_llm_error: bool = False,
     ) -> None:
         self._inspection_api = inspection_api
@@ -67,8 +75,18 @@ class PolicyComplianceEngine:
         self._max_controls = max_controls
         self._max_prompt_records = max_prompt_records
         self._use_llm_judgment = use_llm_judgment
+        self._use_recursive_runtime = use_recursive_runtime
+        self._recursive_budget = recursive_budget or RuntimeBudget(
+            max_iterations=20,
+            max_depth=2,
+            max_tool_calls=160,
+            max_subcalls=60,
+            max_tokens_total=260000,
+        )
         self._fallback_on_llm_error = fallback_on_llm_error
         self._prompt_definition: PromptDefinition = _POLICY_COMPLIANCE_PROMPT
+        if self._use_llm_judgment and self._use_recursive_runtime:
+            self._prompt_definition = get_prompt_definition(_RECURSIVE_COMPLIANCE_PROMPT_ID)
         self.prompt_template_hash = self._prompt_definition.prompt_template_hash
         model_provider = str(getattr(self._model_client, "model_provider", "") or "").strip()
         if model_provider:
@@ -86,6 +104,11 @@ class PolicyComplianceEngine:
             "cost_usd": 0.0,
             "model_provider": self.model_provider,
             "compliance_judgment_mode": "deterministic",
+            "runtime_state": "completed",
+            "budget_reason": "",
+            "state_trajectory": [],
+            "subcall_metadata": [],
+            "subcalls": 0,
         }
 
     def get_runtime_signals(self) -> dict[str, object]:
@@ -607,21 +630,273 @@ class PolicyComplianceEngine:
     ) -> None:
         llm_used = bool(runtime_tracker.get("llm_used"))
         fallback_used = bool(runtime_tracker.get("fallback_used"))
+        recursive_used = bool(runtime_tracker.get("recursive_used"))
         if fallback_used:
             mode = "deterministic_fallback"
+        elif recursive_used:
+            mode = "recursive_llm"
         elif llm_used:
             mode = "llm"
         else:
             mode = "deterministic"
         model_provider = str(runtime_tracker.get("model_provider") or self.model_provider)
         self._runtime_signals["iterations"] = max(1, int(runtime_tracker.get("attempts") or 1))
-        self._runtime_signals["depth_reached"] = 0
-        self._runtime_signals["tool_calls"] = int(runtime_tracker.get("llm_calls") or 0)
+        self._runtime_signals["depth_reached"] = int(runtime_tracker.get("depth_reached") or 0)
+        if recursive_used:
+            self._runtime_signals["tool_calls"] = int(runtime_tracker.get("tool_calls") or 0)
+        else:
+            self._runtime_signals["tool_calls"] = int(runtime_tracker.get("llm_calls") or 0)
         self._runtime_signals["tokens_in"] = int(usage_total.tokens_in)
         self._runtime_signals["tokens_out"] = int(usage_total.tokens_out)
         self._runtime_signals["cost_usd"] = float(usage_total.cost_usd)
         self._runtime_signals["model_provider"] = model_provider
         self._runtime_signals["compliance_judgment_mode"] = mode
+        self._runtime_signals["runtime_state"] = str(runtime_tracker.get("runtime_state") or "completed")
+        self._runtime_signals["budget_reason"] = str(runtime_tracker.get("budget_reason") or "")
+        raw_trajectory = runtime_tracker.get("state_trajectory") or []
+        self._runtime_signals["state_trajectory"] = [
+            str(item) for item in raw_trajectory if str(item).strip()
+        ]
+        raw_subcall_metadata = runtime_tracker.get("subcall_metadata") or []
+        subcall_metadata = [item for item in raw_subcall_metadata if isinstance(item, dict)]
+        self._runtime_signals["subcall_metadata"] = subcall_metadata
+        self._runtime_signals["subcalls"] = len(subcall_metadata)
+        sandbox_violations = runtime_tracker.get("sandbox_violations") or []
+        if sandbox_violations:
+            self._runtime_signals["sandbox_violations"] = [
+                str(item) for item in sandbox_violations if str(item).strip()
+            ]
+
+    @staticmethod
+    def _evidence_refs_from_payload(
+        payload_refs: Any,
+        *,
+        trace_id: str,
+        default_span_id: str,
+    ) -> list[EvidenceRef]:
+        allowed_kinds = {"SPAN", "TOOL_IO", "RETRIEVAL_CHUNK", "MESSAGE", "CONFIG_DIFF"}
+        parsed: list[EvidenceRef] = []
+        if not isinstance(payload_refs, list):
+            return parsed
+        for item in payload_refs:
+            if not isinstance(item, dict):
+                continue
+            kind = str(item.get("kind") or "SPAN").upper()
+            if kind not in allowed_kinds:
+                continue
+            ref = str(item.get("ref") or "")
+            span_id = str(item.get("span_id") or default_span_id)
+            if not ref or not span_id:
+                continue
+            parsed.append(
+                EvidenceRef(
+                    trace_id=str(item.get("trace_id") or trace_id),
+                    span_id=span_id,
+                    kind=kind,  # type: ignore[arg-type]
+                    ref=ref,
+                    excerpt_hash=str(item.get("excerpt_hash") or hash_excerpt(ref)),
+                    ts=(str(item.get("ts")) if item.get("ts") is not None else None),
+                )
+            )
+        return parsed
+
+    def _evaluate_control_recursive(
+        self,
+        inspection_api: Any,
+        control: dict[str, Any],
+        request: PolicyComplianceRequest,
+        default_evidence: EvidenceRef,
+        gaps: list[str],
+        usage_total: StructuredGenerationUsage,
+        runtime_tracker: dict[str, Any],
+    ) -> ComplianceFinding:
+        control_id = str(control.get("control_id") or "control.unknown")
+        severity = str(control.get("severity") or "medium").lower()
+        if severity not in self._SEVERITY_ORDER:
+            severity = "medium"
+
+        required_evidence_raw = [
+            str(item)
+            for item in (control.get("required_evidence") or [])
+            if isinstance(item, str) and str(item)
+        ]
+        required_evidence = list(dict.fromkeys(required_evidence_raw))
+        if not required_evidence:
+            try:
+                required_evidence = list(
+                    dict.fromkeys(
+                        [
+                            str(item)
+                            for item in (
+                                inspection_api.required_evidence(control_id, request.controls_version)
+                                or []
+                            )
+                            if str(item)
+                        ]
+                    )
+                )
+            except Exception as exc:
+                gaps.append(
+                    f"Failed to load required evidence for {control_id} "
+                    f"({request.controls_version}): {exc}"
+                )
+
+        model_client = self._resolve_model_client()
+        model_provider = str(getattr(model_client, "model_provider", self.model_provider) or "openai")
+        planner = StructuredActionPlanner(
+            client=model_client,
+            model_name=self.model_name,
+            temperature=self.temperature,
+            prompt_id=_RECURSIVE_COMPLIANCE_PROMPT_ID,
+        )
+        self.prompt_template_hash = planner.prompt_template_hash
+        runtime_tracker["recursive_used"] = True
+        runtime_tracker["llm_used"] = True
+        runtime_tracker["model_provider"] = model_provider
+
+        tool_registry = ToolRegistry(inspection_api=inspection_api)
+        sandbox_guard = SandboxGuard(allowed_tools=tool_registry.allowed_tools)
+        recursive_loop = RecursiveLoop(tool_registry=tool_registry, sandbox_guard=sandbox_guard)
+
+        planner_seed = {
+            "engine_type": self.engine_type,
+            "trace_id": request.trace_id,
+            "controls_version": request.controls_version,
+            "control": self._control_snapshot(control),
+            "required_evidence": required_evidence,
+        }
+
+        def _planner(context: dict[str, Any]) -> dict[str, Any]:
+            merged_context = dict(context)
+            merged_context.update(planner_seed)
+            return planner(merged_context)
+
+        loop_result: RecursiveLoopResult = recursive_loop.run(
+            actions=[],
+            planner=_planner,
+            budget=self._recursive_budget,
+            objective=(
+                "policy_compliance recursive investigation for "
+                f"trace={request.trace_id} control={control_id}"
+            ),
+            parent_call_id=f"policy_compliance:{control_id}",
+            input_ref_hash=hash_excerpt(f"{request.trace_id}:{control_id}"),
+        )
+        usage_total.add(
+            StructuredGenerationUsage(
+                tokens_in=int(loop_result.usage.tokens_in),
+                tokens_out=int(loop_result.usage.tokens_out),
+                cost_usd=float(loop_result.usage.cost_usd),
+            )
+        )
+        runtime_tracker["attempts"] = int(runtime_tracker.get("attempts") or 0) + max(
+            1, int(loop_result.usage.iterations)
+        )
+        runtime_tracker["tool_calls"] = int(runtime_tracker.get("tool_calls") or 0) + int(
+            loop_result.usage.tool_calls
+        )
+        runtime_tracker["depth_reached"] = max(
+            int(runtime_tracker.get("depth_reached") or 0),
+            int(loop_result.usage.depth_reached),
+        )
+        runtime_tracker.setdefault("state_trajectory", []).extend(loop_result.state_trajectory)
+        runtime_tracker.setdefault("subcall_metadata", []).extend(loop_result.subcall_metadata)
+
+        if loop_result.status == "terminated_budget":
+            runtime_tracker["runtime_state"] = "terminated_budget"
+            if not runtime_tracker.get("budget_reason"):
+                runtime_tracker["budget_reason"] = str(loop_result.budget_reason or "")
+        if loop_result.status == "failed":
+            runtime_tracker["runtime_state"] = "failed"
+            if loop_result.error_code == "SANDBOX_VIOLATION":
+                runtime_tracker.setdefault("sandbox_violations", []).append(
+                    str(loop_result.error_message or "")
+                )
+            if loop_result.error_code == "MODEL_OUTPUT_INVALID":
+                if not self._fallback_on_llm_error:
+                    raise ModelOutputInvalidError(
+                        loop_result.error_message or "Recursive compliance planner output was invalid."
+                    )
+                runtime_tracker["fallback_used"] = True
+                gaps.append(
+                    f"LLM compliance judgment failed and deterministic fallback was used for {control_id}: "
+                    f"{loop_result.error_message or loop_result.error_code or 'unknown error'}"
+                )
+            else:
+                raise RuntimeError(loop_result.error_message or "Recursive compliance planner run failed.")
+
+        payload = loop_result.output if isinstance(loop_result.output, dict) else {}
+        selected_evidence = self._evidence_refs_from_payload(
+            payload.get("evidence_refs"),
+            trace_id=request.trace_id,
+            default_span_id=default_evidence.span_id,
+        )
+        if not selected_evidence:
+            selected_evidence = [default_evidence]
+
+        covered_requirements = [
+            str(item)
+            for item in (payload.get("covered_requirements") or [])
+            if isinstance(item, str) and str(item)
+        ]
+        missing_evidence = [
+            str(item)
+            for item in (payload.get("missing_evidence") or [])
+            if isinstance(item, str) and str(item)
+        ]
+        if required_evidence:
+            for requirement in required_evidence:
+                if requirement not in covered_requirements and requirement not in missing_evidence:
+                    missing_evidence.append(requirement)
+        missing_evidence = list(dict.fromkeys(missing_evidence))
+
+        deterministic_pass_fail, deterministic_confidence, deterministic_remediation = (
+            self._deterministic_outcome(
+                control=control,
+                has_violation=False,
+                required_evidence=required_evidence,
+            )
+        )
+        pass_fail = str(payload.get("pass_fail") or "").strip()
+        confidence_raw = payload.get("confidence")
+        confidence = deterministic_confidence
+        if isinstance(confidence_raw, (int, float)):
+            confidence = max(0.0, min(1.0, float(confidence_raw)))
+        remediation = str(payload.get("remediation") or "").strip()
+        if not remediation:
+            remediation = deterministic_remediation
+
+        if missing_evidence:
+            pass_fail = "insufficient_evidence"
+            confidence = min(confidence, 0.5)
+        elif pass_fail not in _ALLOWED_CONTROL_VERDICTS:
+            pass_fail = deterministic_pass_fail
+
+        if not remediation:
+            remediation = "Review control evidence and rerun compliance evaluation."
+
+        llm_gaps: list[str] = []
+        gaps_payload = payload.get("gaps")
+        if isinstance(gaps_payload, list):
+            llm_gaps.extend([str(item).strip() for item in gaps_payload if str(item).strip()])
+        if loop_result.status == "terminated_budget":
+            llm_gaps.append(
+                loop_result.budget_reason
+                or "Recursive runtime reached a budget limit before control finalize."
+            )
+        if llm_gaps:
+            gaps.extend(llm_gaps)
+
+        return ComplianceFinding(
+            controls_version=request.controls_version,
+            control_id=control_id,
+            pass_fail=pass_fail,  # type: ignore[arg-type]
+            severity=severity,  # type: ignore[arg-type]
+            confidence=confidence,
+            evidence_refs=self._dedupe_evidence_refs(selected_evidence),
+            missing_evidence=missing_evidence,
+            remediation=remediation,
+        )
 
     def _evaluate_control(
         self,
@@ -780,7 +1055,15 @@ class PolicyComplianceEngine:
             "llm_calls": 0,
             "llm_used": False,
             "fallback_used": False,
+            "recursive_used": False,
             "model_provider": self.model_provider,
+            "tool_calls": 0,
+            "depth_reached": 0,
+            "runtime_state": "completed",
+            "budget_reason": "",
+            "state_trajectory": [],
+            "subcall_metadata": [],
+            "sandbox_violations": [],
         }
 
         inspection_api = self._resolve_inspection_api(request)
@@ -817,22 +1100,36 @@ class PolicyComplianceEngine:
             )
             ordered_controls = self._sort_controls(merged_controls)[: self._max_controls]
             default_evidence = self._root_evidence_ref(request.trace_id, spans)
-            evidence_catalog = self._build_evidence_catalog(
-                inspection_api,
-                request.trace_id,
-                spans,
-                gaps,
-            )
-            text_records = self._build_text_evidence_records(
-                inspection_api,
-                request.trace_id,
-                spans,
-                gaps,
-            )
+            recursive_mode = self._use_llm_judgment and self._use_recursive_runtime
+            evidence_catalog: dict[str, list[EvidenceRef]] = {}
+            text_records: list[tuple[str, EvidenceRef]] = []
+            if not recursive_mode:
+                evidence_catalog = self._build_evidence_catalog(
+                    inspection_api,
+                    request.trace_id,
+                    spans,
+                    gaps,
+                )
+                text_records = self._build_text_evidence_records(
+                    inspection_api,
+                    request.trace_id,
+                    spans,
+                    gaps,
+                )
 
             for control in ordered_controls:
-                findings.append(
-                    self._evaluate_control(
+                if recursive_mode:
+                    finding = self._evaluate_control_recursive(
+                        inspection_api=inspection_api,
+                        control=control,
+                        request=request,
+                        default_evidence=default_evidence,
+                        gaps=gaps,
+                        usage_total=usage_total,
+                        runtime_tracker=runtime_tracker,
+                    )
+                else:
+                    finding = self._evaluate_control(
                         inspection_api=inspection_api,
                         control=control,
                         request=request,
@@ -843,7 +1140,7 @@ class PolicyComplianceEngine:
                         usage_total=usage_total,
                         runtime_tracker=runtime_tracker,
                     )
-                )
+                findings.append(finding)
 
             if not findings:
                 findings.append(
