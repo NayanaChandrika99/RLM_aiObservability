@@ -85,6 +85,8 @@ class RuntimeRef:
     prompt_template_hash: str
     budget: RuntimeBudget
     usage: RuntimeUsage
+    state_trajectory: list[str] = field(default_factory=list)
+    subcall_metadata: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass

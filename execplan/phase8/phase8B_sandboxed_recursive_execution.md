@@ -15,10 +15,10 @@ In this repository, "sandboxed recursive execution" means model-directed inspect
 - [x] (2026-02-10 15:00Z) Reviewed recursion and sandbox contract requirements in runtime specs.
 - [x] (2026-02-10 15:00Z) Drafted initial Phase 8B plan.
 - [x] (2026-02-10 15:16Z) Revised Phase 8B with explicit action types, state machine, and budget ownership.
-- [ ] Add runtime recursion state machine and subcall metadata tracking.
-- [ ] Add sandbox guard layer that blocks forbidden operations.
-- [ ] Add allowlisted tool invocation layer bound to `InspectionAPI`.
-- [ ] Add budget-stop and partial-finalization behavior tests.
+- [x] (2026-02-10 15:50Z) Added runtime recursion state machine and subcall metadata tracking in `recursive_loop.py` and `run_record.runtime_ref`.
+- [x] (2026-02-10 15:50Z) Added sandbox guard layer that rejects unknown actions and forbidden tools.
+- [x] (2026-02-10 15:50Z) Added allowlisted tool invocation registry bound to `InspectionAPI`.
+- [x] (2026-02-10 15:50Z) Added and passed budget-stop/state/sandbox tests for recursive loop and runner partial mapping.
 
 ## Surprises & Discoveries
 
@@ -26,6 +26,8 @@ In this repository, "sandboxed recursive execution" means model-directed inspect
   Evidence: `investigator/runtime/runner.py` checks limits from aggregated signals after `engine.run(request)` returns.
 - Observation: Existing engine logic already isolates read access through `InspectionAPI` methods.
   Evidence: `investigator/rca/engine.py`, `investigator/compliance/engine.py`, and `investigator/incident/engine.py` call inspection APIs rather than direct Phoenix reads in core logic.
+- Observation: Runner needs explicit runtime-state input (`runtime_state=terminated_budget`) to emit partial status when counters do not exceed post-hoc thresholds.
+  Evidence: `tests/unit/test_runtime_recursive_loop_phase8.py` requires `run_engine` to map terminated budget to `status=partial` using runtime signals.
 
 ## Decision Log
 
@@ -44,7 +46,7 @@ In this repository, "sandboxed recursive execution" means model-directed inspect
 
 ## Outcomes & Retrospective
 
-Phase not implemented yet. Success is a tested recursive loop that can terminate safely under budget/sandbox pressure and still persist a useful partial artifact.
+Phase implemented with typed recursive loop execution, sandbox validation, allowlisted tool registry calls, and runner mapping for `terminated_budget -> partial` artifacts.
 
 ## References
 

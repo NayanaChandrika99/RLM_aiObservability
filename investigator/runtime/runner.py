@@ -65,7 +65,18 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def _collect_runtime_signals(engine: Engine[RequestT, OutputT]) -> tuple[RuntimeUsage, int, list[str], str | None]:
+def _collect_runtime_signals(
+    engine: Engine[RequestT, OutputT],
+) -> tuple[
+    RuntimeUsage,
+    int,
+    list[str],
+    str | None,
+    str | None,
+    str | None,
+    list[str],
+    list[dict[str, Any]],
+]:
     runtime_signals: dict[str, Any] = {}
     if hasattr(engine, "get_runtime_signals"):
         candidate = engine.get_runtime_signals()
@@ -84,7 +95,24 @@ def _collect_runtime_signals(engine: Engine[RequestT, OutputT]) -> tuple[Runtime
     sandbox_violations = [str(item) for item in raw_violations if str(item).strip()]
     provider_candidate = str(runtime_signals.get("model_provider") or "").strip()
     model_provider = provider_candidate if provider_candidate else None
-    return usage, subcalls, sandbox_violations, model_provider
+    runtime_state_raw = str(runtime_signals.get("runtime_state") or "").strip().lower()
+    runtime_state = runtime_state_raw if runtime_state_raw else None
+    budget_reason_raw = str(runtime_signals.get("budget_reason") or "").strip()
+    budget_reason = budget_reason_raw if budget_reason_raw else None
+    raw_trajectory = runtime_signals.get("state_trajectory") or []
+    state_trajectory = [str(item) for item in raw_trajectory if str(item).strip()]
+    raw_subcall_metadata = runtime_signals.get("subcall_metadata") or []
+    subcall_metadata = [item for item in raw_subcall_metadata if isinstance(item, dict)]
+    return (
+        usage,
+        subcalls,
+        sandbox_violations,
+        model_provider,
+        runtime_state,
+        budget_reason,
+        state_trajectory,
+        subcall_metadata,
+    )
 
 
 def _recursion_limit_messages(
@@ -146,7 +174,16 @@ def run_engine(
     try:
         output = engine.run(request)
         elapsed_seconds = time.monotonic() - start_monotonic
-        usage, subcalls, sandbox_violations, signal_model_provider = _collect_runtime_signals(engine)
+        (
+            usage,
+            subcalls,
+            sandbox_violations,
+            signal_model_provider,
+            runtime_state,
+            budget_reason,
+            state_trajectory,
+            subcall_metadata,
+        ) = _collect_runtime_signals(engine)
         model_provider = signal_model_provider or str(getattr(engine, "model_provider", "openai"))
         output_payload = output.to_dict() if hasattr(output, "to_dict") else {"output": str(output)}
         completed_at = utc_now_rfc3339()
@@ -166,6 +203,8 @@ def run_engine(
                 prompt_template_hash=engine.prompt_template_hash,
                 budget=active_budget,
                 usage=usage,
+                state_trajectory=state_trajectory,
+                subcall_metadata=subcall_metadata,
             ),
             output_ref=OutputRef(
                 artifact_type=engine.output_contract_name,
@@ -241,11 +280,17 @@ def run_engine(
             usage=usage,
             subcalls=subcalls,
         )
-        if recursion_messages:
+        budget_messages = list(recursion_messages)
+        if runtime_state == "terminated_budget":
+            if budget_reason:
+                budget_messages.insert(0, budget_reason)
+            elif not budget_messages:
+                budget_messages.append("Runtime entered terminated_budget state.")
+        if budget_messages:
             run_record.status = "partial"
             run_record.error = RunError(
                 code="RECURSION_LIMIT_REACHED",
-                message="; ".join(recursion_messages),
+                message="; ".join(budget_messages),
                 stage="runtime_budget",
                 retryable=True,
             )
@@ -255,7 +300,16 @@ def run_engine(
     except Exception as exc:  # pragma: no cover
         if isinstance(exc, RuntimeError) and exc.args and isinstance(exc.args[0], dict):
             raise
-        usage, _, _, signal_model_provider = _collect_runtime_signals(engine)
+        (
+            usage,
+            _,
+            _,
+            signal_model_provider,
+            _,
+            _,
+            state_trajectory,
+            subcall_metadata,
+        ) = _collect_runtime_signals(engine)
         if usage.iterations <= 0:
             usage.iterations = 1
         model_provider = signal_model_provider or str(getattr(engine, "model_provider", "openai"))
@@ -282,6 +336,8 @@ def run_engine(
                 prompt_template_hash=engine.prompt_template_hash,
                 budget=active_budget,
                 usage=usage,
+                state_trajectory=state_trajectory,
+                subcall_metadata=subcall_metadata,
             ),
             output_ref=OutputRef(
                 artifact_type=engine.output_contract_name,
