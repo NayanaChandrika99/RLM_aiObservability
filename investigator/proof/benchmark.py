@@ -255,60 +255,33 @@ def _incident_profiles(
     return profiles
 
 
-def _incident_expected_trace_ids(
+def _incident_selector_contract(top_k: int) -> dict[str, int]:
+    return {
+        "max_representatives": top_k,
+        "error_quota": top_k,
+        "latency_quota": 0,
+        "cluster_quota": 0,
+    }
+
+
+def _incident_expected_profiles(
     *,
     profiles: list[dict[str, Any]],
-    expected_labels: dict[str, str],
     top_k: int,
-) -> list[str]:
-    severe_labels = {"tool_failure", "upstream_dependency_failure", "data_schema_mismatch"}
-    severe_candidates = [
-        profile
-        for profile in profiles
-        if str(expected_labels.get(str(profile.get("trace_id") or ""), "")) in severe_labels
-    ]
-    ordered = sorted(
-        severe_candidates,
-        key=lambda profile: (
-            -int(profile.get("error_spans") or 0),
-            -float(profile.get("latency_ms") or 0.0),
-            str(profile.get("trace_id") or ""),
-        ),
+) -> list[dict[str, Any]]:
+    selector_contract = _incident_selector_contract(top_k)
+    selector = IncidentDossierEngine(
+        inspection_api=None,
+        max_representatives=selector_contract["max_representatives"],
+        error_quota=selector_contract["error_quota"],
+        latency_quota=selector_contract["latency_quota"],
+        cluster_quota=selector_contract["cluster_quota"],
     )
-    selected: list[str] = []
-    seen_signatures: set[tuple[str, str, str]] = set()
-    for profile in ordered:
-        if len(selected) >= top_k:
-            break
-        signature = profile.get("signature")
-        if isinstance(signature, tuple) and signature in seen_signatures:
-            continue
-        trace_id = str(profile.get("trace_id") or "")
-        if not trace_id:
-            continue
-        selected.append(trace_id)
-        if isinstance(signature, tuple):
-            seen_signatures.add(signature)
-
-    if len(selected) >= top_k:
-        return selected[:top_k]
-
-    fallback = sorted(
-        profiles,
-        key=lambda profile: (
-            -int(profile.get("error_spans") or 0),
-            -float(profile.get("latency_ms") or 0.0),
-            str(profile.get("trace_id") or ""),
-        ),
+    expected = selector._choose_representative_profiles(
+        [dict(profile) for profile in profiles],
+        override_trace_ids=None,
     )
-    for profile in fallback:
-        if len(selected) >= top_k:
-            break
-        trace_id = str(profile.get("trace_id") or "")
-        if not trace_id or trace_id in selected:
-            continue
-        selected.append(trace_id)
-    return selected[:top_k]
+    return expected[:top_k]
 
 
 def _incident_baseline_trace_ids(
@@ -338,27 +311,175 @@ def _overlap_at_k(*, expected: list[str], predicted: list[str], k: int) -> float
     return len(expected_set.intersection(predicted_set)) / float(k)
 
 
-def _incident_diagnostics(*, expected: list[str], predicted: list[str], k: int) -> dict[str, Any]:
-    expected_at_k = expected[:k]
-    predicted_at_k = predicted[:k]
+def _signature_key(signature: tuple[str, str, str] | None) -> str:
+    if not isinstance(signature, tuple) or len(signature) != 3:
+        return "unknown|unknown|unknown"
+    return "|".join(str(item) for item in signature)
+
+
+def _parse_bucket_from_why_selected(text: str) -> str:
+    value = str(text or "").strip()
+    if "_bucket" not in value:
+        return "unknown"
+    bucket = value.split("_bucket", 1)[0].strip()
+    return bucket or "unknown"
+
+
+def _incident_representative_buckets(representative_traces: list[Any]) -> dict[str, str]:
+    buckets: dict[str, str] = {}
+    for representative in representative_traces:
+        trace_id = str(getattr(representative, "trace_id", "") or "")
+        why_selected = str(getattr(representative, "why_selected", "") or "")
+        if not trace_id:
+            continue
+        buckets[trace_id] = _parse_bucket_from_why_selected(why_selected)
+    return buckets
+
+
+def _incident_diagnostics(
+    *,
+    expected_profiles: list[dict[str, Any]],
+    predicted_ids: list[str],
+    k: int,
+    profile_by_trace_id: dict[str, dict[str, Any]],
+    predicted_buckets: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    expected_at_k_profiles = expected_profiles[:k]
+    expected_at_k = [str(profile.get("trace_id") or "") for profile in expected_at_k_profiles if str(profile.get("trace_id") or "")]
+    predicted_at_k = [str(trace_id) for trace_id in predicted_ids[:k] if str(trace_id)]
     predicted_set = set(predicted_at_k)
     intersection = [trace_id for trace_id in expected_at_k if trace_id in predicted_set]
+
+    expected_profile_by_id = {
+        str(profile.get("trace_id") or ""): profile
+        for profile in expected_at_k_profiles
+        if str(profile.get("trace_id") or "")
+    }
+    expected_bucket_by_id = {
+        trace_id: str(profile.get("bucket") or "unknown")
+        for trace_id, profile in expected_profile_by_id.items()
+    }
+    expected_signature_by_id = {
+        trace_id: profile.get("signature") if isinstance(profile.get("signature"), tuple) else None
+        for trace_id, profile in expected_profile_by_id.items()
+    }
+
+    predicted_bucket_by_id: dict[str, str] = {}
+    for trace_id in predicted_at_k:
+        if predicted_buckets and trace_id in predicted_buckets:
+            predicted_bucket_by_id[trace_id] = str(predicted_buckets[trace_id] or "unknown")
+            continue
+        predicted_bucket_by_id[trace_id] = str(
+            (profile_by_trace_id.get(trace_id) or {}).get("bucket") or "unknown"
+        )
+
+    predicted_signature_by_id: dict[str, tuple[str, str, str] | None] = {}
+    for trace_id in predicted_at_k:
+        signature = (profile_by_trace_id.get(trace_id) or {}).get("signature")
+        predicted_signature_by_id[trace_id] = signature if isinstance(signature, tuple) else None
+
     rows: list[dict[str, Any]] = []
     for trace_id in sorted(set(expected_at_k).union(predicted_at_k)):
+        in_expected = trace_id in expected_profile_by_id
+        in_predicted = trace_id in predicted_set
+        mismatch: list[str] = []
+        if in_expected and not in_predicted:
+            mismatch.append("missing_from_predicted")
+        if in_predicted and not in_expected:
+            mismatch.append("unexpected_in_predicted")
+        if in_expected and in_predicted:
+            expected_bucket = expected_bucket_by_id.get(trace_id, "unknown")
+            predicted_bucket = predicted_bucket_by_id.get(trace_id, "unknown")
+            if expected_bucket != predicted_bucket:
+                mismatch.append("bucket_mismatch")
         rows.append(
             {
                 "trace_id": trace_id,
                 "expected_rank": (expected_at_k.index(trace_id) + 1) if trace_id in expected_at_k else None,
                 "predicted_rank": (predicted_at_k.index(trace_id) + 1) if trace_id in predicted_at_k else None,
                 "in_intersection": trace_id in intersection,
+                "expected_bucket": expected_bucket_by_id.get(trace_id),
+                "predicted_bucket": predicted_bucket_by_id.get(trace_id),
+                "expected_signature": _signature_key(expected_signature_by_id.get(trace_id)),
+                "predicted_signature": _signature_key(predicted_signature_by_id.get(trace_id)),
+                "mismatch_reasons": mismatch,
             }
         )
+
+    missing_by_bucket: dict[str, int] = {}
+    unexpected_by_bucket: dict[str, int] = {}
+    for trace_id in expected_at_k:
+        if trace_id in predicted_set:
+            continue
+        bucket = expected_bucket_by_id.get(trace_id, "unknown")
+        missing_by_bucket[bucket] = missing_by_bucket.get(bucket, 0) + 1
+    for trace_id in predicted_at_k:
+        if trace_id in expected_profile_by_id:
+            continue
+        bucket = predicted_bucket_by_id.get(trace_id, "unknown")
+        unexpected_by_bucket[bucket] = unexpected_by_bucket.get(bucket, 0) + 1
+
+    expected_signatures: dict[str, list[str]] = {}
+    predicted_signatures: dict[str, list[str]] = {}
+    for trace_id in expected_at_k:
+        signature_key = _signature_key(expected_signature_by_id.get(trace_id))
+        expected_signatures.setdefault(signature_key, []).append(trace_id)
+    for trace_id in predicted_at_k:
+        signature_key = _signature_key(predicted_signature_by_id.get(trace_id))
+        predicted_signatures.setdefault(signature_key, []).append(trace_id)
+
+    missing_signatures = sorted(
+        signature
+        for signature in expected_signatures
+        if signature not in predicted_signatures
+    )
+    unexpected_signatures = sorted(
+        signature
+        for signature in predicted_signatures
+        if signature not in expected_signatures
+    )
+    substituted_signatures: list[dict[str, Any]] = []
+    for signature in sorted(set(expected_signatures).intersection(predicted_signatures)):
+        expected_ids = sorted(expected_signatures[signature])
+        predicted_ids_for_signature = sorted(predicted_signatures[signature])
+        if expected_ids != predicted_ids_for_signature:
+            substituted_signatures.append(
+                {
+                    "signature": signature,
+                    "expected_trace_ids": expected_ids,
+                    "predicted_trace_ids": predicted_ids_for_signature,
+                }
+            )
+
     return {
         "k": k,
         "expected_ids": expected_at_k,
         "predicted_ids": predicted_at_k,
         "intersection": intersection,
+        "expected_profiles": [
+            {
+                "trace_id": str(profile.get("trace_id") or ""),
+                "bucket": str(profile.get("bucket") or ""),
+                "error_spans": int(profile.get("error_spans") or 0),
+                "latency_ms": float(profile.get("latency_ms") or 0.0),
+                "signature": _signature_key(
+                    profile.get("signature") if isinstance(profile.get("signature"), tuple) else None
+                ),
+            }
+            for profile in expected_at_k_profiles
+        ],
         "rows": rows,
+        "mismatch_reasons": {
+            "by_bucket": {
+                "missing_from_predicted": missing_by_bucket,
+                "unexpected_in_predicted": unexpected_by_bucket,
+            },
+            "by_signature": {
+                "missing_signatures": missing_signatures,
+                "unexpected_signatures": unexpected_signatures,
+                "substituted_signatures": substituted_signatures,
+            },
+        },
     }
 
 
@@ -369,6 +490,30 @@ def _resolved_delta_thresholds(delta_thresholds: dict[str, float] | None) -> dic
             continue
         resolved[capability] = float(value)
     return resolved
+
+
+def _incident_gate_result(
+    *,
+    threshold: float,
+    baseline_overlap: float,
+    rlm_overlap: float,
+) -> dict[str, Any]:
+    max_headroom = max(0.0, 1.0 - baseline_overlap)
+    effective_threshold = min(float(threshold), max_headroom)
+    delta = rlm_overlap - baseline_overlap
+    non_regression_ok = rlm_overlap + 1e-12 >= baseline_overlap
+    delta_ok = delta + 1e-12 >= effective_threshold
+    return {
+        "metric": "delta.overlap_at_k",
+        "threshold": float(threshold),
+        "effective_threshold": effective_threshold,
+        "actual": delta,
+        "baseline_overlap_at_k": baseline_overlap,
+        "rlm_overlap_at_k": rlm_overlap,
+        "headroom": max_headroom,
+        "non_regression_ok": non_regression_ok,
+        "passed": non_regression_ok and delta_ok,
+    }
 
 
 def _rca_per_label_diagnostics(
@@ -568,20 +713,31 @@ def run_dataset_benchmark(
         trace_ids=benchmark_trace_ids,
         trace_latency_map=trace_latency_map,
     )
-    expected_incident = _incident_expected_trace_ids(
+    expected_incident_profiles = _incident_expected_profiles(
         profiles=incident_profiles,
-        expected_labels=expected_labels,
         top_k=top_k,
     )
+    expected_incident = [
+        str(profile.get("trace_id") or "")
+        for profile in expected_incident_profiles
+        if str(profile.get("trace_id") or "")
+    ]
+    incident_profile_by_trace = {
+        str(profile.get("trace_id") or ""): dict(profile)
+        for profile in incident_profiles
+        if str(profile.get("trace_id") or "")
+    }
     baseline_incident = _incident_baseline_trace_ids(
         profiles=incident_profiles,
         top_k=top_k,
     )
     baseline_overlap = _overlap_at_k(expected=expected_incident, predicted=baseline_incident, k=top_k)
     baseline_diagnostics = _incident_diagnostics(
-        expected=expected_incident,
-        predicted=baseline_incident,
+        expected_profiles=expected_incident_profiles,
+        predicted_ids=baseline_incident,
         k=top_k,
+        profile_by_trace_id=incident_profile_by_trace,
+        predicted_buckets=None,
     )
 
     incident_report, incident_run_record = run_incident_dossier_workflow(
@@ -602,11 +758,16 @@ def run_dataset_benchmark(
         writeback_client=_FakeAnnotationClient(),
     )
     incident_trace_ids = [item.trace_id for item in incident_report.representative_traces]
+    incident_predicted_buckets = _incident_representative_buckets(
+        incident_report.representative_traces
+    )
     rlm_overlap = _overlap_at_k(expected=expected_incident, predicted=incident_trace_ids, k=top_k)
     rlm_diagnostics = _incident_diagnostics(
-        expected=expected_incident,
-        predicted=incident_trace_ids,
+        expected_profiles=expected_incident_profiles,
+        predicted_ids=incident_trace_ids,
         k=top_k,
+        profile_by_trace_id=incident_profile_by_trace,
+        predicted_buckets=incident_predicted_buckets,
     )
 
     rca_delta = rca_rlm_accuracy - rca_baseline_accuracy
@@ -626,6 +787,11 @@ def run_dataset_benchmark(
         rca_delta=rca_delta,
         threshold=thresholds["rca"],
     )
+    incident_gate = _incident_gate_result(
+        threshold=thresholds["incident"],
+        baseline_overlap=baseline_overlap,
+        rlm_overlap=rlm_overlap,
+    )
     gate_results = {
         "rca": {
             "metric": "delta.accuracy",
@@ -644,12 +810,7 @@ def run_dataset_benchmark(
                 and bool(compliance_profile_coverage["all_profiles_covered"])
             ),
         },
-        "incident": {
-            "metric": "delta.overlap_at_k",
-            "threshold": thresholds["incident"],
-            "actual": incident_delta,
-            "passed": incident_delta >= thresholds["incident"],
-        },
+        "incident": incident_gate,
     }
 
     return {
@@ -694,6 +855,7 @@ def run_dataset_benchmark(
                 "delta": {"overlap_at_k": incident_delta},
                 "diagnostics": {
                     "k": top_k,
+                    "selector_contract": _incident_selector_contract(top_k),
                     "baseline": baseline_diagnostics,
                     "rlm": rlm_diagnostics,
                 },

@@ -1,13 +1,22 @@
-# ABOUTME: Implements deterministic incident representative trace selection over the Inspection API.
-# ABOUTME: Produces contract-aligned incident dossiers with evidence-linked trace selection rationale.
+# ABOUTME: Implements deterministic incident representative selection plus optional per-trace LLM synthesis.
+# ABOUTME: Produces contract-aligned incident dossiers with evidence-linked hypotheses and actions.
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 from typing import Any
 
 from investigator.inspection_api import PhoenixInspectionAPI
-from investigator.runtime.prompt_registry import get_prompt_definition
+from investigator.runtime.llm_client import (
+    ModelOutputInvalidError,
+    OpenAIModelClient,
+    RuntimeModelClient,
+    StructuredGenerationRequest,
+    StructuredGenerationUsage,
+)
+from investigator.runtime.llm_loop import run_structured_generation_loop
+from investigator.runtime.prompt_registry import PromptDefinition, get_prompt_definition
 from investigator.runtime.contracts import (
     EvidenceRef,
     IncidentDossier,
@@ -33,12 +42,14 @@ class IncidentDossierRequest:
 
 _INCIDENT_PROMPT_ID = "incident_dossier_judgment_v1"
 _INCIDENT_PROMPT = get_prompt_definition(_INCIDENT_PROMPT_ID)
+_ALLOWED_ACTION_PRIORITIES = {"P0", "P1", "P2"}
+_ALLOWED_ACTION_TYPES = {"mitigation", "follow_up_fix"}
 
 
 class IncidentDossierEngine:
     engine_type = "incident_dossier"
     output_contract_name = "IncidentDossier"
-    engine_version = "0.2.0"
+    engine_version = "0.3.0"
     model_provider = "openai"
     model_name = "gpt-5-mini"
     prompt_template_hash = _INCIDENT_PROMPT.prompt_template_hash
@@ -47,17 +58,47 @@ class IncidentDossierEngine:
     def __init__(
         self,
         inspection_api: Any | None = None,
+        model_client: RuntimeModelClient | None = None,
         *,
         max_representatives: int = 12,
         error_quota: int = 5,
         latency_quota: int = 5,
         cluster_quota: int = 2,
+        max_prompt_timeline_events: int = 6,
+        use_llm_judgment: bool = False,
+        fallback_on_llm_error: bool = False,
     ) -> None:
         self._inspection_api = inspection_api
+        self._model_client = model_client
         self._max_representatives = max_representatives
         self._error_quota = error_quota
         self._latency_quota = latency_quota
         self._cluster_quota = cluster_quota
+        self._max_prompt_timeline_events = max_prompt_timeline_events
+        self._use_llm_judgment = use_llm_judgment
+        self._fallback_on_llm_error = fallback_on_llm_error
+        self._prompt_definition: PromptDefinition = _INCIDENT_PROMPT
+        self.prompt_template_hash = self._prompt_definition.prompt_template_hash
+        model_provider = str(getattr(self._model_client, "model_provider", "") or "").strip()
+        if model_provider:
+            self.model_provider = model_provider
+        self._runtime_signals: dict[str, object] = {}
+        self._reset_runtime_signals()
+
+    def _reset_runtime_signals(self) -> None:
+        self._runtime_signals = {
+            "iterations": 1,
+            "depth_reached": 0,
+            "tool_calls": 0,
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "cost_usd": 0.0,
+            "model_provider": self.model_provider,
+            "incident_judgment_mode": "deterministic",
+        }
+
+    def get_runtime_signals(self) -> dict[str, object]:
+        return dict(self._runtime_signals)
 
     def build_input_ref(self, request: IncidentDossierRequest) -> InputRef:
         return InputRef(
@@ -79,6 +120,38 @@ class IncidentDossierEngine:
             return float(value)
         except (TypeError, ValueError):
             return default
+
+    @classmethod
+    def _coerce_confidence(cls, value: Any, *, default: float) -> float:
+        if isinstance(value, (int, float)):
+            return max(0.0, min(1.0, float(value)))
+        return max(0.0, min(1.0, float(default)))
+
+    @staticmethod
+    def _coerce_action_priority(value: Any) -> str:
+        normalized = str(value or "").strip().upper()
+        if normalized in _ALLOWED_ACTION_PRIORITIES:
+            return normalized
+        return "P1"
+
+    @staticmethod
+    def _coerce_action_type(value: Any) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized in _ALLOWED_ACTION_TYPES:
+            return normalized
+        return "follow_up_fix"
+
+    @staticmethod
+    def _dedupe_evidence_refs(evidence_refs: list[EvidenceRef]) -> list[EvidenceRef]:
+        deduped: list[EvidenceRef] = []
+        seen: set[tuple[str, str]] = set()
+        for evidence in evidence_refs:
+            key = (evidence.kind, evidence.ref)
+            if key in seen:
+                continue
+            deduped.append(evidence)
+            seen.add(key)
+        return deduped
 
     @staticmethod
     def _signature_from_spans(spans: list[dict[str, Any]]) -> tuple[str, str, str]:
@@ -143,6 +216,17 @@ class IncidentDossierEngine:
             excerpt_hash=hash_excerpt(summary_text),
             ts=profile.get("start_time"),
         )
+
+    @staticmethod
+    def _evidence_dict(evidence: EvidenceRef) -> dict[str, Any]:
+        return {
+            "trace_id": evidence.trace_id,
+            "span_id": evidence.span_id,
+            "kind": evidence.kind,
+            "ref": evidence.ref,
+            "excerpt_hash": evidence.excerpt_hash,
+            "ts": evidence.ts,
+        }
 
     @staticmethod
     def _change_type_from_paths(paths: list[str]) -> str:
@@ -444,166 +528,446 @@ class IncidentDossierEngine:
         )
         return ordered[: self._max_representatives]
 
+    def _resolve_model_client(self) -> RuntimeModelClient:
+        if self._model_client is None:
+            self._model_client = OpenAIModelClient()
+        return self._model_client
+
+    def _llm_trace_synthesis(
+        self,
+        *,
+        request: IncidentDossierRequest,
+        profile: dict[str, Any],
+        representative_trace: RepresentativeTrace,
+        timeline: list[IncidentTimelineEvent],
+        suspected_change: SuspectedChange,
+    ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]], list[str], float, int, StructuredGenerationUsage, str]:
+        timeline_snapshot = [
+            {
+                "timestamp": item.timestamp,
+                "event": item.event,
+                "evidence_refs": [self._evidence_dict(ref) for ref in item.evidence_refs[:3]],
+            }
+            for item in sorted(timeline, key=lambda row: row.timestamp)[: self._max_prompt_timeline_events]
+        ]
+        prompt_payload = {
+            "project_name": request.project_name,
+            "incident_window": {
+                "start": request.time_window_start,
+                "end": request.time_window_end,
+            },
+            "representative_trace": {
+                "trace_id": representative_trace.trace_id,
+                "why_selected": representative_trace.why_selected,
+                "profile": {
+                    "bucket": str(profile.get("bucket") or ""),
+                    "error_spans": int(profile.get("error_spans") or 0),
+                    "latency_ms": float(profile.get("latency_ms") or 0.0),
+                    "signature": profile.get("signature"),
+                },
+                "evidence_refs": [
+                    self._evidence_dict(ref) for ref in representative_trace.evidence_refs[:5]
+                ],
+            },
+            "suspected_change": {
+                "change_type": suspected_change.change_type,
+                "change_ref": suspected_change.change_ref,
+                "diff_ref": suspected_change.diff_ref,
+                "summary": suspected_change.summary,
+                "evidence_refs": [self._evidence_dict(ref) for ref in suspected_change.evidence_refs[:3]],
+            },
+            "timeline": timeline_snapshot,
+        }
+        model_client = self._resolve_model_client()
+        model_provider = str(getattr(model_client, "model_provider", self.model_provider) or "openai")
+        request_payload = StructuredGenerationRequest(
+            model_provider=model_provider,
+            model_name=self.model_name,
+            temperature=self.temperature,
+            system_prompt=self._prompt_definition.prompt_text,
+            user_prompt=json.dumps(prompt_payload, sort_keys=True),
+            response_schema_name=self._prompt_definition.prompt_id,
+            response_schema=self._prompt_definition.response_schema,
+        )
+        loop_result = run_structured_generation_loop(
+            client=model_client,
+            request=request_payload,
+        )
+        payload = loop_result.output
+        summary = str(payload.get("incident_summary") or "").strip()
+        hypotheses_payload = payload.get("hypotheses")
+        actions_payload = payload.get("recommended_actions")
+        gaps_payload = payload.get("gaps")
+        confidence = self._coerce_confidence(payload.get("confidence"), default=0.6)
+        hypotheses = hypotheses_payload if isinstance(hypotheses_payload, list) else []
+        actions = actions_payload if isinstance(actions_payload, list) else []
+        llm_gaps = [str(item).strip() for item in gaps_payload or [] if str(item).strip()]
+        return (
+            summary,
+            [item for item in hypotheses if isinstance(item, dict)],
+            [item for item in actions if isinstance(item, dict)],
+            llm_gaps,
+            confidence,
+            int(loop_result.attempt_count),
+            loop_result.usage,
+            model_provider,
+        )
+
+    def _update_runtime_signals(
+        self,
+        *,
+        usage_total: StructuredGenerationUsage,
+        runtime_tracker: dict[str, Any],
+    ) -> None:
+        llm_used = bool(runtime_tracker.get("llm_used"))
+        fallback_used = bool(runtime_tracker.get("fallback_used"))
+        if fallback_used:
+            mode = "deterministic_fallback"
+        elif llm_used:
+            mode = "llm"
+        else:
+            mode = "deterministic"
+        self._runtime_signals["iterations"] = max(1, int(runtime_tracker.get("attempts") or 1))
+        self._runtime_signals["depth_reached"] = 0
+        self._runtime_signals["tool_calls"] = int(runtime_tracker.get("llm_calls") or 0)
+        self._runtime_signals["tokens_in"] = int(usage_total.tokens_in)
+        self._runtime_signals["tokens_out"] = int(usage_total.tokens_out)
+        self._runtime_signals["cost_usd"] = float(usage_total.cost_usd)
+        self._runtime_signals["model_provider"] = str(
+            runtime_tracker.get("model_provider") or self.model_provider
+        )
+        self._runtime_signals["incident_judgment_mode"] = mode
+
     def run(self, request: IncidentDossierRequest) -> IncidentDossier:
+        self._reset_runtime_signals()
+        usage_total = StructuredGenerationUsage()
+        runtime_tracker: dict[str, Any] = {
+            "attempts": 0,
+            "llm_calls": 0,
+            "llm_used": False,
+            "fallback_used": False,
+            "model_provider": self.model_provider,
+        }
+
         inspection_api = self._resolve_inspection_api(request)
         gaps: list[str] = []
 
-        trace_summaries: list[dict[str, Any]] = []
-        if request.trace_ids_override:
-            for trace_id in request.trace_ids_override:
+        try:
+            trace_summaries: list[dict[str, Any]] = []
+            if request.trace_ids_override:
+                for trace_id in request.trace_ids_override:
+                    try:
+                        spans = inspection_api.list_spans(trace_id) or []
+                    except Exception as exc:
+                        spans = []
+                        gaps.append(f"Failed to list spans for override trace {trace_id}: {exc}")
+                    latency_ms = max(
+                        [self._safe_float(span.get("latency_ms")) for span in spans] or [0.0]
+                    )
+                    start_time = (
+                        sorted(
+                            [str(span.get("start_time") or "") for span in spans if span.get("start_time")],
+                        )[0]
+                        if spans
+                        else request.time_window_start
+                    )
+                    trace_summaries.append(
+                        {
+                            "trace_id": trace_id,
+                            "start_time": start_time,
+                            "end_time": request.time_window_end,
+                            "latency_ms": latency_ms,
+                        }
+                    )
+            else:
+                try:
+                    trace_summaries = inspection_api.list_traces(
+                        request.project_name,
+                        start_time=request.time_window_start,
+                        end_time=request.time_window_end,
+                        filter_expr=request.filter_expr,
+                    ) or []
+                except Exception as exc:
+                    gaps.append(f"Failed to list traces for incident window: {exc}")
+                    trace_summaries = []
+
+            candidates: list[dict[str, Any]] = []
+            for trace_summary in trace_summaries:
+                trace_id = str(trace_summary.get("trace_id") or "")
+                if not trace_id:
+                    continue
                 try:
                     spans = inspection_api.list_spans(trace_id) or []
                 except Exception as exc:
                     spans = []
-                    gaps.append(f"Failed to list spans for override trace {trace_id}: {exc}")
-                latency_ms = max(
-                    [self._safe_float(span.get("latency_ms")) for span in spans] or [0.0]
-                )
-                start_time = (
-                    sorted(
-                        [str(span.get("start_time") or "") for span in spans if span.get("start_time")],
-                    )[0]
-                    if spans
-                    else request.time_window_start
-                )
-                trace_summaries.append(
+                    gaps.append(f"Failed to list spans for trace {trace_id}: {exc}")
+                candidates.append(self._candidate_from_trace(trace_summary, spans))
+
+            representative_profiles = self._choose_representative_profiles(
+                candidates,
+                override_trace_ids=request.trace_ids_override,
+            )
+            if not representative_profiles and candidates:
+                fallback = dict(self._sort_latency_candidates(candidates)[0])
+                fallback["bucket"] = "latency"
+                fallback["bucket_score"] = float(fallback.get("latency_ms") or 0.0)
+                representative_profiles = [fallback]
+                gaps.append("Selection quotas produced no representatives; fallback to top latency trace.")
+            if not representative_profiles:
+                representative_profiles = [
                     {
-                        "trace_id": trace_id,
-                        "start_time": start_time,
-                        "end_time": request.time_window_end,
-                        "latency_ms": latency_ms,
+                        "trace_id": request.trace_ids_override[0] if request.trace_ids_override else "trace-stub",
+                        "bucket": "latency",
+                        "bucket_score": 0.0,
+                        "error_spans": 0,
+                        "latency_ms": 0.0,
+                        "root_span_id": "root-span",
+                        "start_time": request.time_window_start,
+                        "signature": ("unknown_service", "none", "none"),
                     }
+                ]
+                gaps.append("No candidate traces were available; incident dossier used fallback trace.")
+
+            representative_traces: list[RepresentativeTrace] = []
+            impacted_components: list[str] = []
+            for profile in representative_profiles:
+                evidence = self._evidence_from_profile(profile)
+                service_name = str((profile.get("signature") or ("unknown_service", "", ""))[0])
+                if service_name not in impacted_components:
+                    impacted_components.append(service_name)
+                representative_traces.append(
+                    RepresentativeTrace(
+                        trace_id=str(profile.get("trace_id") or "trace-stub"),
+                        why_selected=(
+                            f"{profile.get('bucket')}_bucket(score={float(profile.get('bucket_score') or 0.0):.2f}, "
+                            f"error_spans={int(profile.get('error_spans') or 0)}, "
+                            f"latency_ms={float(profile.get('latency_ms') or 0.0):.2f})"
+                        ),
+                        evidence_refs=[evidence],
+                    )
                 )
-        else:
-            try:
-                trace_summaries = inspection_api.list_traces(
-                    request.project_name,
-                    start_time=request.time_window_start,
-                    end_time=request.time_window_end,
-                    filter_expr=request.filter_expr,
-                ) or []
-            except Exception as exc:
-                gaps.append(f"Failed to list traces for incident window: {exc}")
-                trace_summaries = []
 
-        candidates: list[dict[str, Any]] = []
-        for trace_summary in trace_summaries:
-            trace_id = str(trace_summary.get("trace_id") or "")
-            if not trace_id:
-                continue
-            try:
-                spans = inspection_api.list_spans(trace_id) or []
-            except Exception as exc:
-                spans = []
-                gaps.append(f"Failed to list spans for trace {trace_id}: {exc}")
-            candidates.append(self._candidate_from_trace(trace_summary, spans))
-
-        representative_profiles = self._choose_representative_profiles(
-            candidates,
-            override_trace_ids=request.trace_ids_override,
-        )
-        if not representative_profiles and candidates:
-            fallback = dict(self._sort_latency_candidates(candidates)[0])
-            fallback["bucket"] = "latency"
-            fallback["bucket_score"] = float(fallback.get("latency_ms") or 0.0)
-            representative_profiles = [fallback]
-            gaps.append("Selection quotas produced no representatives; fallback to top latency trace.")
-        if not representative_profiles:
-            representative_profiles = [
-                {
-                    "trace_id": request.trace_ids_override[0] if request.trace_ids_override else "trace-stub",
-                    "bucket": "latency",
-                    "bucket_score": 0.0,
-                    "error_spans": 0,
-                    "latency_ms": 0.0,
-                    "root_span_id": "root-span",
-                    "start_time": request.time_window_start,
-                    "signature": ("unknown_service", "none", "none"),
-                }
-            ]
-            gaps.append("No candidate traces were available; incident dossier used fallback trace.")
-
-        representative_traces: list[RepresentativeTrace] = []
-        impacted_components: list[str] = []
-        for profile in representative_profiles:
-            evidence = self._evidence_from_profile(profile)
-            service_name = str((profile.get("signature") or ("unknown_service", "", ""))[0])
-            if service_name not in impacted_components:
-                impacted_components.append(service_name)
-            representative_traces.append(
-                RepresentativeTrace(
-                    trace_id=str(profile.get("trace_id") or "trace-stub"),
-                    why_selected=(
-                        f"{profile.get('bucket')}_bucket(score={float(profile.get('bucket_score') or 0.0):.2f}, "
-                        f"error_spans={int(profile.get('error_spans') or 0)}, "
-                        f"latency_ms={float(profile.get('latency_ms') or 0.0):.2f})"
+            lead_evidence = representative_traces[0].evidence_refs[0]
+            timeline = [
+                IncidentTimelineEvent(
+                    timestamp=request.time_window_start,
+                    event=(
+                        f"Incident window opened for project {request.project_name}; "
+                        f"selected {len(representative_traces)} representative traces."
                     ),
-                    evidence_refs=[evidence],
+                    evidence_refs=[lead_evidence],
                 )
+            ]
+            suspected_change, config_timeline_event, config_gaps = self._build_suspected_change(
+                inspection_api=inspection_api,
+                request=request,
+                lead_evidence=lead_evidence,
             )
+            gaps.extend(config_gaps)
+            if config_timeline_event is not None:
+                timeline.append(config_timeline_event)
+            timeline.sort(key=lambda event: event.timestamp)
 
-        lead_evidence = representative_traces[0].evidence_refs[0]
-        timeline = [
-            IncidentTimelineEvent(
-                timestamp=request.time_window_start,
-                event=(
-                    f"Incident window opened for project {request.project_name}; "
-                    f"selected {len(representative_traces)} representative traces."
-                ),
+            non_ok_count = sum(
+                1 for profile in representative_profiles if int(profile.get("error_spans") or 0) > 0
+            )
+            if non_ok_count > 0:
+                hypothesis_statement = (
+                    f"Error-heavy representative traces suggest concentrated failure patterns across "
+                    f"{non_ok_count} selected traces."
+                )
+                hypothesis_confidence = 0.68
+            else:
+                hypothesis_statement = (
+                    "High-latency representative traces dominate the incident window with limited explicit error spans."
+                )
+                hypothesis_confidence = 0.57
+            deterministic_hypothesis = IncidentHypothesis(
+                rank=1,
+                statement=hypothesis_statement,
                 evidence_refs=[lead_evidence],
+                confidence=hypothesis_confidence,
             )
-        ]
-        suspected_change, config_timeline_event, config_gaps = self._build_suspected_change(
-            inspection_api=inspection_api,
-            request=request,
-            lead_evidence=lead_evidence,
-        )
-        gaps.extend(config_gaps)
-        if config_timeline_event is not None:
-            timeline.append(config_timeline_event)
-        timeline.sort(key=lambda event: event.timestamp)
-        non_ok_count = sum(
-            1 for profile in representative_profiles if int(profile.get("error_spans") or 0) > 0
-        )
-        if non_ok_count > 0:
-            hypothesis_statement = (
-                f"Error-heavy representative traces suggest concentrated failure patterns across "
-                f"{non_ok_count} selected traces."
+            deterministic_action = RecommendedAction(
+                priority="P1",
+                type="follow_up_fix",
+                action=(
+                    "Inspect representative traces in bucket order and validate the latest config diff "
+                    "against failing spans."
+                ),
             )
-            hypothesis_confidence = 0.68
-        else:
-            hypothesis_statement = (
-                "High-latency representative traces dominate the incident window with limited explicit error spans."
+            summary = (
+                f"Selected {len(representative_traces)} representative traces "
+                f"using deterministic error/latency/cluster buckets"
+                f"{'; config diff correlated' if suspected_change.diff_ref else '; config diff unavailable'}."
             )
-            hypothesis_confidence = 0.57
-        hypothesis = IncidentHypothesis(
-            rank=1,
-            statement=hypothesis_statement,
-            evidence_refs=[lead_evidence],
-            confidence=hypothesis_confidence,
-        )
-        action = RecommendedAction(
-            priority="P1",
-            type="follow_up_fix",
-            action=(
-                "Inspect representative traces in bucket order and validate the latest config diff "
-                "against failing spans."
-            ),
-        )
-        summary = (
-            f"Selected {len(representative_traces)} representative traces "
-            f"using deterministic error/latency/cluster buckets"
-            f"{'; config diff correlated' if suspected_change.diff_ref else '; config diff unavailable'}."
-        )
-        confidence = min(0.8, 0.45 + (0.05 * len(representative_traces)))
-        return IncidentDossier(
-            incident_summary=summary,
-            impacted_components=impacted_components or ["unknown_service"],
-            timeline=timeline,
-            representative_traces=representative_traces,
-            suspected_change=suspected_change,
-            hypotheses=[hypothesis],
-            recommended_actions=[action],
-            confidence=confidence,
-            gaps=gaps,
-        )
+            confidence = min(0.8, 0.45 + (0.05 * len(representative_traces)))
+
+            hypotheses: list[IncidentHypothesis] = [deterministic_hypothesis]
+            actions: list[RecommendedAction] = [deterministic_action]
+
+            if self._use_llm_judgment:
+                raw_hypotheses: list[dict[str, Any]] = []
+                raw_actions: list[dict[str, Any]] = []
+                llm_summaries: list[str] = []
+                llm_confidences: list[float] = []
+
+                for profile, representative_trace in zip(representative_profiles, representative_traces):
+                    runtime_tracker["llm_calls"] = int(runtime_tracker.get("llm_calls") or 0) + 1
+                    try:
+                        (
+                            trace_summary,
+                            trace_hypotheses,
+                            trace_actions,
+                            trace_gaps,
+                            trace_confidence,
+                            attempt_count,
+                            usage,
+                            model_provider,
+                        ) = self._llm_trace_synthesis(
+                            request=request,
+                            profile=profile,
+                            representative_trace=representative_trace,
+                            timeline=timeline,
+                            suspected_change=suspected_change,
+                        )
+                        runtime_tracker["attempts"] = int(runtime_tracker.get("attempts") or 0) + max(
+                            1, int(attempt_count)
+                        )
+                        usage_total.add(usage)
+                        runtime_tracker["llm_used"] = True
+                        runtime_tracker["model_provider"] = model_provider
+                        if trace_summary:
+                            llm_summaries.append(trace_summary)
+                        llm_confidences.append(trace_confidence)
+                        if trace_gaps:
+                            gaps.extend(trace_gaps)
+
+                        trace_evidence = self._dedupe_evidence_refs(
+                            list(representative_trace.evidence_refs) + list(suspected_change.evidence_refs)
+                        )
+                        for item in trace_hypotheses:
+                            statement = str(item.get("statement") or "").strip()
+                            if not statement:
+                                continue
+                            raw_hypotheses.append(
+                                {
+                                    "statement": statement,
+                                    "confidence": self._coerce_confidence(
+                                        item.get("confidence"),
+                                        default=trace_confidence,
+                                    ),
+                                    "evidence_refs": trace_evidence,
+                                }
+                            )
+                        for item in trace_actions:
+                            action_text = str(item.get("action") or "").strip()
+                            if not action_text:
+                                continue
+                            raw_actions.append(
+                                {
+                                    "priority": self._coerce_action_priority(item.get("priority")),
+                                    "type": self._coerce_action_type(item.get("type")),
+                                    "action": action_text,
+                                }
+                            )
+                    except ModelOutputInvalidError as exc:
+                        runtime_tracker["attempts"] = int(runtime_tracker.get("attempts") or 0) + int(
+                            getattr(exc, "attempt_count", 1) or 1
+                        )
+                        usage = getattr(exc, "usage", None)
+                        if isinstance(usage, StructuredGenerationUsage):
+                            usage_total.add(usage)
+                        runtime_tracker["model_provider"] = str(
+                            getattr(self._model_client, "model_provider", self.model_provider)
+                            or self.model_provider
+                        )
+                        if not self._fallback_on_llm_error:
+                            raise
+                        runtime_tracker["fallback_used"] = True
+                        gaps.append(
+                            "LLM incident synthesis failed for representative trace "
+                            f"{representative_trace.trace_id}; deterministic fallback was used: {exc}"
+                        )
+
+                if raw_hypotheses:
+                    merged_hypotheses: dict[str, dict[str, Any]] = {}
+                    for item in raw_hypotheses:
+                        statement = str(item["statement"])
+                        existing = merged_hypotheses.get(statement)
+                        evidence_refs = item["evidence_refs"]
+                        if existing is None:
+                            merged_hypotheses[statement] = {
+                                "statement": statement,
+                                "confidence": float(item["confidence"]),
+                                "evidence_refs": list(evidence_refs),
+                            }
+                            continue
+                        existing["confidence"] = max(float(existing["confidence"]), float(item["confidence"]))
+                        existing["evidence_refs"] = self._dedupe_evidence_refs(
+                            list(existing["evidence_refs"]) + list(evidence_refs)
+                        )
+                    ordered_hypotheses = sorted(
+                        merged_hypotheses.values(),
+                        key=lambda row: (-float(row["confidence"]), str(row["statement"])),
+                    )
+                    hypotheses = [
+                        IncidentHypothesis(
+                            rank=index,
+                            statement=str(row["statement"]),
+                            evidence_refs=self._dedupe_evidence_refs(
+                                [ref for ref in row["evidence_refs"] if isinstance(ref, EvidenceRef)]
+                            )
+                            or [lead_evidence],
+                            confidence=self._coerce_confidence(row["confidence"], default=0.6),
+                        )
+                        for index, row in enumerate(ordered_hypotheses, start=1)
+                    ]
+
+                if raw_actions:
+                    seen_actions: set[tuple[str, str, str]] = set()
+                    normalized_actions: list[RecommendedAction] = []
+                    for item in raw_actions:
+                        key = (
+                            str(item["priority"]),
+                            str(item["type"]),
+                            str(item["action"]),
+                        )
+                        if key in seen_actions:
+                            continue
+                        seen_actions.add(key)
+                        normalized_actions.append(
+                            RecommendedAction(
+                                priority=str(item["priority"]),
+                                type=str(item["type"]),
+                                action=str(item["action"]),
+                            )
+                        )
+                    actions = normalized_actions or [deterministic_action]
+
+                if llm_summaries:
+                    selected_summaries = [item for item in llm_summaries if item][:2]
+                    if selected_summaries:
+                        summary = f"{summary} LLM synthesis: {' | '.join(selected_summaries)}"
+                if llm_confidences:
+                    confidence = self._coerce_confidence(
+                        sum(llm_confidences) / max(1, len(llm_confidences)),
+                        default=confidence,
+                    )
+
+            return IncidentDossier(
+                incident_summary=summary,
+                impacted_components=impacted_components or ["unknown_service"],
+                timeline=timeline,
+                representative_traces=representative_traces,
+                suspected_change=suspected_change,
+                hypotheses=hypotheses,
+                recommended_actions=actions,
+                confidence=confidence,
+                gaps=gaps,
+            )
+        finally:
+            self._update_runtime_signals(
+                usage_total=usage_total,
+                runtime_tracker=runtime_tracker,
+            )

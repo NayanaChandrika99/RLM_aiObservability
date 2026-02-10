@@ -271,6 +271,15 @@ def test_run_dataset_benchmark_returns_three_capability_comparisons(tmp_path: Pa
     assert diagnostics["baseline"]["predicted_ids"]
     assert "intersection" in diagnostics["baseline"]
     assert diagnostics["rlm"]["expected_ids"] == diagnostics["baseline"]["expected_ids"]
+    assert diagnostics["selector_contract"]["error_quota"] == diagnostics["k"]
+    assert diagnostics["selector_contract"]["latency_quota"] == 0
+    assert diagnostics["selector_contract"]["cluster_quota"] == 0
+    baseline_mismatch = diagnostics["baseline"]["mismatch_reasons"]
+    assert "by_bucket" in baseline_mismatch
+    assert "by_signature" in baseline_mismatch
+    rlm_mismatch = diagnostics["rlm"]["mismatch_reasons"]
+    assert "by_bucket" in rlm_mismatch
+    assert "by_signature" in rlm_mismatch
 
     gates = report["gates"]
     assert set(gates["thresholds"].keys()) == {"rca", "compliance", "incident"}

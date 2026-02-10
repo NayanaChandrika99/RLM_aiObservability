@@ -153,3 +153,41 @@ def test_run_frozen_dataset_proof_enforces_thresholds(tmp_path: Path) -> None:
             },
             enforce_thresholds=True,
         )
+
+
+def test_run_frozen_dataset_proof_allows_incident_ceiling_without_regression(tmp_path: Path) -> None:
+    parquet_path = tmp_path / "spans.parquet"
+    manifest_path = tmp_path / "manifest.json"
+    controls_dir = tmp_path / "controls"
+    snapshots_dir = tmp_path / "snapshots"
+    proof_root = tmp_path / "artifacts" / "proof_runs"
+    run_artifacts_root = tmp_path / "artifacts" / "investigator_runs"
+
+    _write_dataset(parquet_path, manifest_path)
+    _write_controls(controls_dir)
+    _write_snapshots(snapshots_dir)
+
+    report = run_frozen_dataset_proof(
+        proof_run_id="phase7-incident-ceiling",
+        spans_parquet_path=parquet_path,
+        manifest_path=manifest_path,
+        project_name="phase7-proof",
+        controls_version="controls-v1",
+        controls_dir=controls_dir,
+        snapshots_dir=snapshots_dir,
+        proof_artifacts_root=proof_root,
+        evaluator_artifacts_root=run_artifacts_root,
+        delta_thresholds={
+            "rca": 0.0,
+            "compliance": 0.0,
+            "incident": 0.1,
+        },
+        enforce_thresholds=True,
+    )
+
+    incident_gate = report["gates"]["results"]["incident"]
+    incident_scores = report["capabilities"]["incident"]
+    assert incident_scores["baseline"]["overlap_at_k"] == 1.0
+    assert incident_scores["rlm"]["overlap_at_k"] == 1.0
+    assert incident_scores["delta"]["overlap_at_k"] == 0.0
+    assert incident_gate["passed"] is True

@@ -19,7 +19,20 @@ def _dumps(payload: dict[str, Any]) -> str:
     return json.dumps(payload, sort_keys=True)
 
 
-def _build_root_annotations(report: IncidentDossier, run_id: str) -> list[dict[str, Any]]:
+def _normalize_annotator_kind(kind: str) -> str:
+    normalized = str(kind or "").strip().upper()
+    if normalized in {"LLM", "HUMAN", "CODE"}:
+        return normalized
+    return "CODE"
+
+
+def _build_root_annotations(
+    report: IncidentDossier,
+    run_id: str,
+    *,
+    primary_annotator_kind: str,
+) -> list[dict[str, Any]]:
+    root_kind = _normalize_annotator_kind(primary_annotator_kind)
     rows: list[dict[str, Any]] = []
     seen_spans: set[str] = set()
     for representative in report.representative_traces:
@@ -33,13 +46,13 @@ def _build_root_annotations(report: IncidentDossier, run_id: str) -> list[dict[s
             {
                 "span_id": span_id,
                 "name": "incident.dossier",
-                "annotator_kind": "LLM",
+                "annotator_kind": root_kind,
                 "result": {
                     "label": "incident_dossier",
                     "score": report.confidence,
                     "explanation": _dumps(
                         {
-                            "annotator_kind": "LLM",
+                            "annotator_kind": root_kind,
                             "report": report.to_dict(),
                             "run_id": run_id,
                         }
@@ -53,13 +66,13 @@ def _build_root_annotations(report: IncidentDossier, run_id: str) -> list[dict[s
         {
             "span_id": "root-span",
             "name": "incident.dossier",
-            "annotator_kind": "LLM",
+            "annotator_kind": root_kind,
             "result": {
                 "label": "incident_dossier",
                 "score": report.confidence,
                 "explanation": _dumps(
                     {
-                        "annotator_kind": "LLM",
+                        "annotator_kind": root_kind,
                         "report": report.to_dict(),
                         "run_id": run_id,
                     }
@@ -117,8 +130,17 @@ def _build_timeline_annotations(report: IncidentDossier, run_id: str) -> list[di
     return rows
 
 
-def _build_span_annotations(report: IncidentDossier, run_id: str) -> list[dict[str, Any]]:
-    return _build_root_annotations(report, run_id) + _build_timeline_annotations(report, run_id)
+def _build_span_annotations(
+    report: IncidentDossier,
+    run_id: str,
+    *,
+    primary_annotator_kind: str,
+) -> list[dict[str, Any]]:
+    return _build_root_annotations(
+        report,
+        run_id,
+        primary_annotator_kind=primary_annotator_kind,
+    ) + _build_timeline_annotations(report, run_id)
 
 
 def _write_via_span_annotations(active_client: Any, annotations: list[dict[str, Any]]) -> list[str]:
@@ -176,9 +198,14 @@ def write_incident_to_phoenix(
     report: IncidentDossier,
     run_id: str,
     client: Any | None = None,
+    primary_annotator_kind: str = "LLM",
 ) -> dict[str, Any]:
     active_client = client or PhoenixClient()
-    annotations = _build_span_annotations(report, run_id)
+    annotations = _build_span_annotations(
+        report,
+        run_id,
+        primary_annotator_kind=primary_annotator_kind,
+    )
     phoenix_annotation_ids: list[str] = []
 
     try:
