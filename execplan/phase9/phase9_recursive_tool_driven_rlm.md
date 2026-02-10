@@ -15,6 +15,7 @@ Visible outcome: one proof run where all three capabilities still pass schema/ev
 - [x] (2026-02-10 17:11Z) Cleaned workspace for new implementation: committed Phase 8 master-plan closeout and stashed generated artifacts/manifest churn.
 - [x] (2026-02-10 17:12Z) Created working branch `wip/phase9-aspirational-recursive-rlm`.
 - [x] (2026-02-10 17:22Z) Reviewed runtime contract/spec references and current runtime/engine implementations to map aspirational-vs-current gaps.
+- [x] (2026-02-10 17:30Z) Revised plan with explicit planner-prompt validation harness and recursive cost/call budget acceptance criteria.
 - [ ] Add shared recursive planner protocol that produces typed runtime actions from model output.
 - [ ] Wire RCA engine to execute through recursive runtime loop (tool-call planning + optional delegated label hypotheses).
 - [ ] Wire compliance engine to run per-control recursive evidence collection instead of pre-bulk evidence cataloging.
@@ -29,6 +30,8 @@ Visible outcome: one proof run where all three capabilities still pass schema/ev
   Evidence: `TraceRCAEngine._collect_branch_span_ids(...)` BFS traversal and compliance/incident deterministic evidence/profile construction.
 - Observation: Current runtime contracts already carry fields needed for recursive audit (`state_trajectory`, `subcall_metadata`), reducing schema churn risk.
   Evidence: `investigator/runtime/contracts.py` and `investigator/runtime/runner.py`.
+- Observation: Recursive planner migration will increase model-call volume materially relative to Phase 8 single-turn judgment paths.
+  Evidence: current engines execute one structured generation call per judgment path, while Phase 9 introduces iterative planning + per-objective subcalls.
 
 ## Decision Log
 
@@ -40,6 +43,12 @@ Visible outcome: one proof run where all three capabilities still pass schema/ev
   Date/Author: 2026-02-10 / Codex
 - Decision: Migrate in engine order RCA -> compliance -> incident.
   Rationale: RCA has smallest scope and is best place to validate planner/action loop semantics before applying per-control and cross-trace recursion.
+  Date/Author: 2026-02-10 / Codex
+- Decision: Add an explicit planner prompt validation harness before wiring production engines.
+  Rationale: planner correctness is the highest-risk component; action-shape validity and stop/continue behavior must be measured directly.
+  Date/Author: 2026-02-10 / Codex
+- Decision: Add explicit recursive cost and call-count targets, and require proof acceptance within revised caps.
+  Rationale: iterative planning increases call volume; budgets must be controlled as a first-class acceptance condition.
   Date/Author: 2026-02-10 / Codex
 
 ## Outcomes & Retrospective
@@ -73,12 +82,18 @@ Add a planner layer that turns model output into typed actions (`tool_call`, `de
 
 Implementation focus:
 
+- add planner prompt+schema contract that explicitly includes:
+  - available tool names and argument shapes,
+  - current evidence summary and gaps,
+  - remaining budget snapshot,
+  - explicit stop/finalize criteria;
 - extend runtime loop execution to support planner-driven iterations instead of only pre-supplied action lists;
 - preserve current sandbox and tool allowlist enforcement from `sandbox.py` and `tool_registry.py`;
 - emit comprehensive runtime signals: iterations, depth, tool calls, tokens/cost, runtime state, budget reason, trajectory, subcalls.
 
 Acceptance:
 
+- planner prompt validation harness passes 5 representative scenarios (RCA hot-span drilldown, RCA hypothesis subcall, compliance missing-evidence case, compliance fail case, incident trace drilldown) with valid typed action sequences and no manual correction;
 - new runtime unit tests prove planner loop can perform multiple tool actions before finalize;
 - forced budget and sandbox violations still produce contract-valid `partial`/`failed` run records.
 
@@ -132,7 +147,12 @@ Run targeted and full validations, then execute full proof flow:
 
 - all runtime/engine tests pass;
 - proof report passes gates with recursive paths enabled;
-- run records demonstrate recursive behavior for all three engines.
+- run records demonstrate recursive behavior for all three engines;
+- run records stay within capped recursive call/cost targets:
+  - RCA target: <= 12 LLM calls per trace for hypothesis-competition mode on seeded set.
+  - Compliance target: <= 20 LLM calls per trace across scoped controls on seeded set.
+  - Incident target: <= 50 LLM calls per proof run for representative drilldown + synthesis.
+  - Proof-run max cost cap: start at `max_cost_usd=1.25` with explicit env override for debugging.
 
 ## Concrete Steps
 
@@ -140,23 +160,25 @@ All commands run from repository root (`/Users/nainy/Documents/Personal/rlm_obse
 
 1. Add RED tests for planner-driven recursive loop behavior.
    `uv run pytest tests/unit -q -k "runtime and recursive and planner"`
-2. Implement shared recursive planner runtime changes.
-3. Add RED tests for RCA recursion wiring and hypothesis subcalls.
+2. Add RED tests for planner prompt harness scenarios and action-shape validity.
+   `uv run pytest tests/unit -q -k "planner and phase9 and scenarios"`
+3. Implement shared recursive planner runtime changes.
+4. Add RED tests for RCA recursion wiring and hypothesis subcalls.
    `uv run pytest tests/unit -q -k "trace_rca and phase9 and recursive"`
-4. Implement RCA recursive wiring and verify.
+5. Implement RCA recursive wiring and verify.
    `uv run pytest tests/unit -q -k "trace_rca or runtime"`
-5. Add RED tests for compliance per-control recursion.
+6. Add RED tests for compliance per-control recursion.
    `uv run pytest tests/unit -q -k "compliance and phase9 and recursive"`
-6. Implement compliance recursive wiring and verify.
+7. Implement compliance recursive wiring and verify.
    `uv run pytest tests/unit -q -k "compliance or runtime"`
-7. Add RED tests for incident per-trace drilldown + cross-trace synthesis recursion.
+8. Add RED tests for incident per-trace drilldown + cross-trace synthesis recursion.
    `uv run pytest tests/unit -q -k "incident and phase9 and recursive"`
-8. Implement incident recursive wiring and verify.
+9. Implement incident recursive wiring and verify.
    `uv run pytest tests/unit -q -k "incident or runtime or proof_benchmark"`
-9. Run full regression.
+10. Run full regression.
    `uv run pytest tests/ -q -rs`
-10. Run proof gate.
-   `PHOENIX_WORKING_DIR=.phoenix_data uv run python -m investigator.proof.run_phase7_proof`
+11. Run proof gate with explicit cost cap.
+   `PHOENIX_WORKING_DIR=.phoenix_data PHASE9_MAX_COST_USD=1.25 uv run python -m investigator.proof.run_phase7_proof`
 
 ## Validation and Acceptance
 
@@ -167,6 +189,8 @@ Phase 9 is complete when:
 - Sandbox and budget constraints are enforced during recursive execution.
 - Proof report passes all gates in one run artifact with recursive paths enabled.
 - Full regression test suite passes (except explicit opt-in live skips).
+- Planner prompt harness passes all 5 representative scenarios with valid typed actions and bounded finalize behavior.
+- Recursive runs meet call-count and cost targets, or deviations are explicitly documented in Outcomes with updated accepted caps.
 
 ## Idempotence and Recovery
 
@@ -257,3 +281,4 @@ Reviewed fully before drafting this plan, with behaviors to reuse:
   Behavior reused: runtime usage/cost persistence checks.
 
 Revision Note (2026-02-10): Initial Phase 9 plan drafted to migrate from single-turn LLM judgments to tool-driven recursive engine execution aligned with aspirational RLM behavior.
+Revision Note (2026-02-10): Revised after Nainy review to explicitly require planner-prompt scenario validation and define recursive call/cost acceptance budgets for proof gating.
