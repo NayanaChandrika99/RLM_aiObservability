@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -16,6 +17,11 @@ from investigator.runtime.tool_registry import ToolRegistry
 class _InspectionAPI:
     def list_spans(self, trace_id: str) -> list[dict[str, Any]]:
         return [{"trace_id": trace_id, "span_id": "root"}]
+
+
+class _PermissiveGuard:
+    def validate_action(self, action: dict[str, Any]) -> None:
+        del action
 
 
 def test_recursive_loop_executes_planner_actions_until_finalize() -> None:
@@ -141,3 +147,58 @@ def test_recursive_loop_applies_planner_usage_and_enforces_cost_budget() -> None
     assert result.usage.tokens_out == 18
     assert result.usage.cost_usd == pytest.approx(0.06)
     assert result.usage.tool_calls == 0
+
+
+def test_recursive_loop_exposes_planner_context_summary_across_turns() -> None:
+    registry = ToolRegistry(inspection_api=_InspectionAPI())
+    guard = SandboxGuard(allowed_tools=registry.allowed_tools)
+    loop = RecursiveLoop(tool_registry=registry, sandbox_guard=guard)
+    planner_contexts: list[dict[str, Any]] = []
+
+    def _planner(context: dict[str, Any]) -> dict[str, Any]:
+        planner_contexts.append(json.loads(json.dumps(context)))
+        if len(planner_contexts) == 1:
+            return {
+                "type": "synthesize",
+                "output": {
+                    "evidence_refs": [
+                        {
+                            "trace_id": "trace-9",
+                            "span_id": "root",
+                            "kind": "SPAN",
+                            "ref": "root",
+                        }
+                    ],
+                    "gaps": ["need final synthesis"],
+                },
+            }
+        return {"type": "finalize", "output": {"summary": "planner context complete"}}
+
+    result = loop.run(
+        actions=[],
+        planner=_planner,
+        budget=RuntimeBudget(max_iterations=10),
+        objective="phase9 planner context summary",
+    )
+
+    assert result.status == "completed"
+    assert len(planner_contexts) == 2
+    assert planner_contexts[0]["draft_output_summary"]["evidence_ref_count"] == 0
+    assert planner_contexts[0]["draft_output_summary"]["gap_count"] == 0
+    assert planner_contexts[1]["draft_output_summary"]["evidence_ref_count"] == 1
+    assert planner_contexts[1]["draft_output_summary"]["gap_count"] == 1
+    assert planner_contexts[1]["remaining_budget"]["iterations"] < planner_contexts[0]["remaining_budget"]["iterations"]
+
+
+def test_recursive_loop_fails_fast_for_unknown_action_type_when_validation_is_permissive() -> None:
+    registry = ToolRegistry(inspection_api=_InspectionAPI())
+    loop = RecursiveLoop(tool_registry=registry, sandbox_guard=_PermissiveGuard())  # type: ignore[arg-type]
+
+    result = loop.run(
+        actions=[{"type": "future_action"}],
+        budget=RuntimeBudget(max_iterations=3),
+        objective="phase9 unknown action guard",
+    )
+
+    assert result.status == "failed"
+    assert result.error_code == "MODEL_OUTPUT_INVALID"

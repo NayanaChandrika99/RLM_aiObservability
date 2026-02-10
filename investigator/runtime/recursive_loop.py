@@ -84,6 +84,32 @@ def _parse_non_negative_float(value: Any, *, field_name: str) -> float:
     return parsed
 
 
+def _count_list_items(value: Any) -> int:
+    if isinstance(value, list):
+        return len(value)
+    return 0
+
+
+def _draft_output_summary(draft_output: dict[str, Any]) -> dict[str, Any]:
+    tool_calls = draft_output.get("tool_calls")
+    latest_tool_call: dict[str, Any] | None = None
+    if isinstance(tool_calls, list) and tool_calls:
+        last = tool_calls[-1]
+        if isinstance(last, dict):
+            latest_tool_call = {
+                "tool_name": str(last.get("tool_name") or ""),
+                "args_hash": str(last.get("args_hash") or ""),
+                "response_hash": str(last.get("response_hash") or ""),
+            }
+    return {
+        "tool_call_count": _count_list_items(tool_calls),
+        "evidence_ref_count": _count_list_items(draft_output.get("evidence_refs")),
+        "gap_count": _count_list_items(draft_output.get("gaps")),
+        "has_summary": bool(str(draft_output.get("summary") or "").strip()),
+        "latest_tool_call": latest_tool_call,
+    }
+
+
 @dataclass
 class SubcallResult:
     summary: str
@@ -220,8 +246,25 @@ class RecursiveLoop:
                         "tokens_out": usage.tokens_out,
                         "cost_usd": usage.cost_usd,
                     },
+                    "remaining_budget": {
+                        "iterations": max(0, budget.max_iterations - usage.iterations),
+                        "depth": max(0, budget.max_depth - depth),
+                        "tool_calls": max(0, budget.max_tool_calls - usage.tool_calls),
+                        "subcalls": max(0, budget.max_subcalls - len(subcall_metadata)),
+                        "tokens_total": (
+                            None
+                            if budget.max_tokens_total is None
+                            else max(0, budget.max_tokens_total - (usage.tokens_in + usage.tokens_out))
+                        ),
+                        "cost_usd": (
+                            None
+                            if budget.max_cost_usd is None
+                            else max(0.0, budget.max_cost_usd - usage.cost_usd)
+                        ),
+                    },
                     "subcall_count": len(subcall_metadata),
                     "draft_output": dict(draft_output),
+                    "draft_output_summary": _draft_output_summary(draft_output),
                 }
                 try:
                     planned_action = planner(planner_context)
@@ -477,6 +520,17 @@ class RecursiveLoop:
                     subcall_metadata=subcall_metadata,
                     state_trajectory=machine.trajectory,
                 )
+
+            machine.transition("failed")
+            return RecursiveLoopResult(
+                status="failed",
+                output=draft_output or None,
+                usage=usage,
+                subcall_metadata=subcall_metadata,
+                state_trajectory=machine.trajectory,
+                error_code="MODEL_OUTPUT_INVALID",
+                error_message=f"Unsupported action type at runtime: {action_type or '<empty>'}.",
+            )
 
         machine.transition("finalizing")
         machine.transition("completed")

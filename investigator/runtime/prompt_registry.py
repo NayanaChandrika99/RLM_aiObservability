@@ -61,7 +61,7 @@ def list_prompt_ids() -> list[str]:
     return sorted(_PROMPT_PATHS.keys())
 
 
-def _load_prompt_assets(prompt_id: str) -> tuple[str, str, str, dict[str, Any], str]:
+def _load_prompt_assets(prompt_id: str) -> tuple[str, str, str, str, dict[str, Any], str]:
     if prompt_id not in _PROMPT_PATHS:
         raise KeyError(f"Unknown prompt_id: {prompt_id}")
     prompt_rel, schema_rel = _PROMPT_PATHS[prompt_id]

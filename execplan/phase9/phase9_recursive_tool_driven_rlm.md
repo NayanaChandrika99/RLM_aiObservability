@@ -28,6 +28,7 @@ Visible outcome: one proof run where all three capabilities still pass schema/ev
 - [x] (2026-02-10 18:35Z) Validated engine migrations with focused slices: compliance `12 passed`; incident `9 passed`; consolidated runtime+engine slice `50 passed`.
 - [x] (2026-02-10 18:35Z) Ran full suite `uv run pytest tests/ -q -rs`: `104 passed`, `2 skipped` (live writeback tests gated by env flags).
 - [x] (2026-02-10 18:35Z) Ran proof gate `PHOENIX_WORKING_DIR=.phoenix_data PHASE9_MAX_COST_USD=1.25 uv run python -m investigator.proof.run_phase7_proof`: gates `all_passed=true`; report at `artifacts/proof_runs/phase7-proof-20260210T183448Z/proof_report.json`.
+- [x] (2026-02-10 19:09Z) Applied review-driven hardening: fixed `prompt_registry` tuple annotation bug, enriched planner prompt/context with budget/evidence guidance, and added defensive unknown-action runtime failure + targeted regression tests (`28 passed` slice).
 
 ## Surprises & Discoveries
 
@@ -47,6 +48,8 @@ Visible outcome: one proof run where all three capabilities still pass schema/ev
   Evidence: incident recursive synthesis initially failed with `Object of type EvidenceRef is not JSON serializable` until planner seed conversion to plain dicts.
 - Observation: Proof-gate execution requires live Phoenix on `http://127.0.0.1:6006`; proof runner hard-fails fast when endpoint is unavailable.
   Evidence: initial proof run failed with `ConnectionRefusedError` before Phoenix server startup; rerun with Phoenix running succeeded.
+- Observation: Planner context becomes harder for model reasoning as raw `draft_output.tool_calls` grows, so compact summary fields materially improve planner turn quality without breaking runtime contracts.
+  Evidence: `RecursiveLoop` now provides `draft_output_summary` and `remaining_budget` in planner context; planner prompt references these fields explicitly.
 
 ## Decision Log
 
@@ -68,7 +71,7 @@ Visible outcome: one proof run where all three capabilities still pass schema/ev
 
 ## Outcomes & Retrospective
 
-Phase 9 is complete. All three engines now expose recursive planner-driven execution behind `use_recursive_runtime` while preserving deterministic fallback toggles. Runtime artifacts capture recursive state trajectory, subcall metadata, and budget-state mapping across RCA/compliance/incident paths. Full test suite and proof gate both passed with recursive paths enabled.
+Phase 9 is complete. All three engines now expose recursive planner-driven execution behind `use_recursive_runtime` while preserving deterministic fallback toggles. Runtime artifacts capture recursive state trajectory, subcall metadata, and budget-state mapping across RCA/compliance/incident paths. Full test suite and proof gate both passed with recursive paths enabled. Follow-up design scope (outside this phase) is whether subcalls should support planner-driven child loops and whether budgets should be pooled globally across per-control/per-trace loops.
 
 ## Context and Orientation
 
