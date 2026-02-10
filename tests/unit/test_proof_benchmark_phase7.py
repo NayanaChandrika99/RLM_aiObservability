@@ -101,6 +101,34 @@ def _write_fixture_dataset(parquet_path: Path, manifest_path: Path) -> None:
             "attributes.phase1": {"run_id": "seed_run_0002", "step": "tool.parse"},
             "attributes.http": None,
         },
+        {
+            "name": "agent.run",
+            "span_kind": "AGENT",
+            "parent_id": None,
+            "start_time": pd.Timestamp("2026-02-10T00:07:00Z"),
+            "end_time": pd.Timestamp("2026-02-10T00:07:02Z"),
+            "status_code": "UNSET",
+            "status_message": "",
+            "events": [],
+            "context.span_id": "root-4",
+            "context.trace_id": "trace-4",
+            "attributes.phase1": {"run_id": "seed_run_0003", "step": None, "project": "phase7-proof"},
+            "attributes.http": None,
+        },
+        {
+            "name": "llm.generate",
+            "span_kind": "UNKNOWN",
+            "parent_id": "root-4",
+            "start_time": pd.Timestamp("2026-02-10T00:07:00Z"),
+            "end_time": pd.Timestamp("2026-02-10T00:07:02Z"),
+            "status_code": "ERROR",
+            "status_message": "format drift",
+            "events": [],
+            "context.span_id": "llm-4",
+            "context.trace_id": "trace-4",
+            "attributes.phase1": {"run_id": "seed_run_0003", "step": "llm.generate"},
+            "attributes.http": None,
+        },
     ]
     pd.DataFrame(rows).to_parquet(parquet_path, index=False)
 
@@ -112,6 +140,7 @@ def _write_fixture_dataset(parquet_path: Path, manifest_path: Path) -> None:
             {"run_id": "seed_run_0000", "trace_id": None, "expected_label": "tool_failure"},
             {"run_id": "seed_run_0001", "trace_id": None, "expected_label": "retrieval_failure"},
             {"run_id": "seed_run_0002", "trace_id": None, "expected_label": "data_schema_mismatch"},
+            {"run_id": "seed_run_0003", "trace_id": None, "expected_label": "instruction_failure"},
         ],
     }
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
@@ -122,13 +151,25 @@ def _write_controls(controls_dir: Path) -> None:
     payload = {
         "controls": [
             {
-                "control_id": "control.error.free",
+                "control_id": "control.execution.hard_failures",
                 "controls_version": "controls-v1",
                 "severity": "high",
                 "required_evidence": [],
-                "max_error_spans": 0,
-                "remediation_template": "Fix error spans.",
+                "violation_patterns": [
+                    "forced tool timeout",
+                    "upstream unavailable",
+                    "schema mismatch",
+                ],
+                "remediation_template": "Address hard-failure signals before approval.",
                 "applies_when": {"app_types": [], "tools": [], "data_domains": []},
+            },
+            {
+                "control_id": "control.instruction.format.review",
+                "controls_version": "controls-v1",
+                "severity": "medium",
+                "required_evidence": ["required_messages"],
+                "remediation_template": "Collect message evidence for format-drift traces before approval.",
+                "applies_when": {"app_types": [], "tools": ["llm.generate"], "data_domains": []},
             }
         ]
     }
@@ -176,7 +217,7 @@ def test_run_dataset_benchmark_returns_three_capability_comparisons(tmp_path: Pa
         artifacts_root=artifacts_root,
     )
 
-    assert report["dataset"]["trace_count"] == 3
+    assert report["dataset"]["trace_count"] == 4
     assert set(report["capabilities"].keys()) == {"rca", "compliance", "incident"}
 
     rca = report["capabilities"]["rca"]
@@ -184,7 +225,9 @@ def test_run_dataset_benchmark_returns_three_capability_comparisons(tmp_path: Pa
     assert rca["delta"]["accuracy"] == rca["rlm"]["accuracy"] - rca["baseline"]["accuracy"]
 
     compliance = report["capabilities"]["compliance"]
-    assert compliance["sample_count"] == 3
+    assert compliance["sample_count"] == 4
+    assert compliance["rlm"]["accuracy"] > compliance["baseline"]["accuracy"]
+    assert compliance["delta"]["accuracy"] >= 0.05
 
     incident = report["capabilities"]["incident"]
     assert 0.0 <= incident["baseline"]["overlap_at_k"] <= 1.0

@@ -6,12 +6,32 @@
         "data_domains": [],
         "tools": []
       },
-      "control_id": "control.error.free",
+      "control_id": "control.execution.hard_failures",
       "controls_version": "controls-v1",
-      "max_error_spans": 0,
-      "remediation_template": "Investigate and eliminate ERROR spans before approval.",
+      "remediation_template": "Address hard-failure execution signals before approval.",
       "required_evidence": [],
-      "severity": "high"
+      "severity": "high",
+      "violation_patterns": [
+        "forced tool timeout",
+        "upstream unavailable",
+        "schema mismatch"
+      ]
+    },
+    {
+      "applies_when": {
+        "app_types": [],
+        "data_domains": [],
+        "tools": [
+          "llm.generate"
+        ]
+      },
+      "control_id": "control.instruction.format.review",
+      "controls_version": "controls-v1",
+      "remediation_template": "Collect message evidence for format-drift traces before approval.",
+      "required_evidence": [
+        "required_messages"
+      ],
+      "severity": "medium"
     }
   ]
 }

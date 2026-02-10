@@ -79,10 +79,11 @@ class PolicyComplianceEngine:
 
     @staticmethod
     def _infer_tools_used(spans: list[dict[str, Any]]) -> list[str]:
+        scoped_kinds = {"TOOL", "RETRIEVER", "LLM", "UNKNOWN"}
         tools = {
             str(span.get("name") or "")
             for span in spans
-            if str(span.get("span_kind") or "") == "TOOL" and str(span.get("name") or "")
+            if str(span.get("span_kind") or "") in scoped_kinds and str(span.get("name") or "")
         }
         return sorted(tools)
 

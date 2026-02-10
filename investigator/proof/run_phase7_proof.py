@@ -75,14 +75,30 @@ def _ensure_default_controls(controls_dir: Path, controls_version: str) -> Path:
     payload = {
         "controls": [
             {
-                "control_id": "control.error.free",
+                "control_id": "control.execution.hard_failures",
                 "controls_version": controls_version,
                 "severity": "high",
                 "required_evidence": [],
-                "max_error_spans": 0,
-                "remediation_template": "Investigate and eliminate ERROR spans before approval.",
+                "violation_patterns": [
+                    "forced tool timeout",
+                    "upstream unavailable",
+                    "schema mismatch",
+                ],
+                "remediation_template": "Address hard-failure execution signals before approval.",
                 "applies_when": {"app_types": [], "tools": [], "data_domains": []},
-            }
+            },
+            {
+                "control_id": "control.instruction.format.review",
+                "controls_version": controls_version,
+                "severity": "medium",
+                "required_evidence": ["required_messages"],
+                "remediation_template": "Collect message evidence for format-drift traces before approval.",
+                "applies_when": {
+                    "app_types": [],
+                    "tools": ["llm.generate"],
+                    "data_domains": [],
+                },
+            },
         ]
     }
     _ensure_json(controls_file, payload)

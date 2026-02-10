@@ -326,3 +326,16 @@ def test_policy_compliance_fails_on_violation_patterns() -> None:
     assert finding.pass_fail == "fail"
     assert finding.missing_evidence == []
     assert report.overall_verdict == "non_compliant"
+
+
+def test_policy_compliance_infers_non_agent_span_names_for_scope() -> None:
+    spans = [
+        {"name": "agent.run", "span_kind": "AGENT"},
+        {"name": "llm.generate", "span_kind": "UNKNOWN"},
+        {"name": "retriever.fetch", "span_kind": "RETRIEVER"},
+        {"name": "tool.call", "span_kind": "TOOL"},
+    ]
+
+    tools_used = PolicyComplianceEngine._infer_tools_used(spans)
+
+    assert tools_used == ["llm.generate", "retriever.fetch", "tool.call"]
