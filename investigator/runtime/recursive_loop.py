@@ -8,6 +8,7 @@ import time
 from typing import Any, Callable, Literal
 from uuid import uuid4
 
+from investigator.runtime.budget_pool import RuntimeBudgetPool
 from investigator.runtime.contracts import RuntimeBudget, RuntimeUsage, utc_now_rfc3339
 from investigator.runtime.sandbox import SandboxGuard, SandboxViolationError
 from investigator.runtime.tool_registry import ToolRegistry
@@ -110,6 +111,12 @@ def _draft_output_summary(draft_output: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _stop_delegate_depth_threshold(max_depth: int) -> int:
+    if max_depth <= 3:
+        return 1
+    return 2
+
+
 @dataclass
 class SubcallResult:
     summary: str
@@ -185,7 +192,9 @@ class RecursiveLoop:
         *,
         actions: list[dict[str, Any]],
         budget: RuntimeBudget,
+        budget_pool: RuntimeBudgetPool | None = None,
         planner: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
+        delegation_context: dict[str, Any] | None = None,
         depth: int = 0,
         objective: str = "root",
         parent_call_id: str = "root",
@@ -202,6 +211,24 @@ class RecursiveLoop:
         queue = [dict(action) for action in actions]
 
         while queue or planner is not None:
+            elapsed_seconds = time.monotonic() - started
+            if planner is not None and elapsed_seconds >= (0.9 * float(budget.max_wall_time_sec)):
+                wall_time_guard_message = (
+                    "Wall-time guard triggered near max_wall_time_sec; "
+                    "finalizing best-effort output before timeout."
+                )
+                merged_gaps = draft_output.setdefault("gaps", [])
+                if isinstance(merged_gaps, list) and wall_time_guard_message not in merged_gaps:
+                    merged_gaps.append(wall_time_guard_message)
+                machine.transition("finalizing")
+                machine.transition("completed")
+                return RecursiveLoopResult(
+                    status="completed",
+                    output=draft_output or {},
+                    usage=usage,
+                    subcall_metadata=subcall_metadata,
+                    state_trajectory=machine.trajectory,
+                )
             reason = self._budget_reason(
                 budget=budget,
                 usage=usage,
@@ -209,6 +236,10 @@ class RecursiveLoop:
                 depth=depth,
                 start_monotonic=started,
             )
+            if budget_pool is not None and reason is None:
+                pool_reason = budget_pool.budget_reason(depth=depth)
+                if pool_reason:
+                    reason = f"shared_budget_pool: {pool_reason}"
             if reason:
                 machine.transition("terminated_budget")
                 return RecursiveLoopResult(
@@ -221,6 +252,8 @@ class RecursiveLoop:
                 )
 
             if not queue and planner is not None:
+                remaining_depth = max(0, budget.max_depth - depth)
+                stop_delegate_depth_threshold = _stop_delegate_depth_threshold(budget.max_depth)
                 planner_context = {
                     "objective": objective,
                     "parent_call_id": parent_call_id,
@@ -248,7 +281,7 @@ class RecursiveLoop:
                     },
                     "remaining_budget": {
                         "iterations": max(0, budget.max_iterations - usage.iterations),
-                        "depth": max(0, budget.max_depth - depth),
+                        "depth": remaining_depth,
                         "tool_calls": max(0, budget.max_tool_calls - usage.tool_calls),
                         "subcalls": max(0, budget.max_subcalls - len(subcall_metadata)),
                         "tokens_total": (
@@ -262,10 +295,29 @@ class RecursiveLoop:
                             else max(0.0, budget.max_cost_usd - usage.cost_usd)
                         ),
                     },
+                    "depth_stop_rule": {
+                        "remaining_depth": remaining_depth,
+                        "stop_delegate_depth_threshold": stop_delegate_depth_threshold,
+                        "must_not_delegate": remaining_depth <= stop_delegate_depth_threshold,
+                    },
                     "subcall_count": len(subcall_metadata),
                     "draft_output": dict(draft_output),
                     "draft_output_summary": _draft_output_summary(draft_output),
                 }
+                if delegation_context is not None:
+                    planner_context["delegation_context"] = {
+                        str(key): delegation_context[key] for key in delegation_context
+                    }
+                if budget_pool is not None:
+                    remaining = budget_pool.remaining()
+                    planner_context["shared_budget_remaining"] = {
+                        "iterations": remaining.iterations,
+                        "depth": remaining.depth,
+                        "tool_calls": remaining.tool_calls,
+                        "subcalls": remaining.subcalls,
+                        "tokens_total": remaining.tokens_total,
+                        "cost_usd": remaining.cost_usd,
+                    }
                 try:
                     planned_action = planner(planner_context)
                 except Exception as exc:
@@ -297,18 +349,28 @@ class RecursiveLoop:
                     planner_usage = envelope_usage
                 if planner_usage is not None:
                     try:
-                        usage.tokens_in += _parse_non_negative_int(
+                        planner_tokens_in = _parse_non_negative_int(
                             planner_usage.get("tokens_in", 0),
                             field_name="planner usage tokens_in",
                         )
-                        usage.tokens_out += _parse_non_negative_int(
+                        planner_tokens_out = _parse_non_negative_int(
                             planner_usage.get("tokens_out", 0),
                             field_name="planner usage tokens_out",
                         )
-                        usage.cost_usd += _parse_non_negative_float(
+                        planner_cost_usd = _parse_non_negative_float(
                             planner_usage.get("cost_usd", 0.0),
                             field_name="planner usage cost_usd",
                         )
+                        usage.tokens_in += planner_tokens_in
+                        usage.tokens_out += planner_tokens_out
+                        usage.cost_usd += planner_cost_usd
+                        if budget_pool is not None:
+                            budget_pool.consume(
+                                tokens_in=planner_tokens_in,
+                                tokens_out=planner_tokens_out,
+                                cost_usd=planner_cost_usd,
+                                depth=depth,
+                            )
                     except (TypeError, ValueError) as exc:
                         machine.transition("failed")
                         return RecursiveLoopResult(
@@ -337,6 +399,18 @@ class RecursiveLoop:
                             state_trajectory=machine.trajectory,
                             budget_reason=reason_after_planning,
                         )
+                    if budget_pool is not None:
+                        pool_reason_after_planning = budget_pool.budget_reason(depth=depth)
+                        if pool_reason_after_planning:
+                            machine.transition("terminated_budget")
+                            return RecursiveLoopResult(
+                                status="terminated_budget",
+                                output=draft_output or None,
+                                usage=usage,
+                                subcall_metadata=subcall_metadata,
+                                state_trajectory=machine.trajectory,
+                                budget_reason=f"shared_budget_pool: {pool_reason_after_planning}",
+                            )
                 if planned_action is None:
                     machine.transition("finalizing")
                     machine.transition("completed")
@@ -380,10 +454,57 @@ class RecursiveLoop:
                 machine.transition("acting")
                 usage.iterations += 1
                 usage.tool_calls += 1
-                call_result = self._tool_registry.call(
-                    str(action.get("tool_name")),
-                    dict(action.get("args") or {}),
-                )
+                if budget_pool is not None:
+                    budget_pool.consume(iterations=1, tool_calls=1, depth=depth)
+                tool_name = str(action.get("tool_name") or "")
+                call_args = dict(action.get("args") or {})
+                fatal_tool_call = bool(action.get("fatal", False))
+                try:
+                    call_result = self._tool_registry.call(tool_name, call_args)
+                except SandboxViolationError as exc:
+                    call_result = {
+                        "tool_name": tool_name,
+                        "normalized_args": call_args,
+                        "args_hash": "",
+                        "result": {
+                            "error_code": "SANDBOX_VIOLATION",
+                            "error_message": str(exc),
+                        },
+                        "response_hash": "",
+                    }
+                    if fatal_tool_call:
+                        machine.transition("failed")
+                        return RecursiveLoopResult(
+                            status="failed",
+                            output=draft_output or None,
+                            usage=usage,
+                            subcall_metadata=subcall_metadata,
+                            state_trajectory=machine.trajectory,
+                            error_code="SANDBOX_VIOLATION",
+                            error_message=str(exc),
+                        )
+                except Exception as exc:
+                    call_result = {
+                        "tool_name": tool_name,
+                        "normalized_args": call_args,
+                        "args_hash": "",
+                        "result": {
+                            "error_code": "TOOL_CALL_FAILED",
+                            "error_message": str(exc),
+                        },
+                        "response_hash": "",
+                    }
+                    if fatal_tool_call:
+                        machine.transition("failed")
+                        return RecursiveLoopResult(
+                            status="failed",
+                            output=draft_output or None,
+                            usage=usage,
+                            subcall_metadata=subcall_metadata,
+                            state_trajectory=machine.trajectory,
+                            error_code="TOOL_CALL_FAILED",
+                            error_message=str(exc),
+                        )
                 draft_output.setdefault("tool_calls", []).append(call_result)
                 machine.transition("planning")
                 continue
@@ -391,6 +512,8 @@ class RecursiveLoop:
             if action_type == "synthesize":
                 machine.transition("acting")
                 usage.iterations += 1
+                if budget_pool is not None:
+                    budget_pool.consume(iterations=1, depth=depth)
                 output_patch = action.get("output")
                 if isinstance(output_patch, dict):
                     draft_output.update(output_patch)
@@ -400,6 +523,26 @@ class RecursiveLoop:
             if action_type == "delegate_subcall":
                 machine.transition("delegating")
                 usage.iterations += 1
+                if budget_pool is not None:
+                    budget_pool.consume(iterations=1, depth=depth)
+                stop_delegate_depth_threshold = _stop_delegate_depth_threshold(budget.max_depth)
+                if planner is not None and max(0, budget.max_depth - depth) <= stop_delegate_depth_threshold:
+                    depth_guard_message = (
+                        "Depth-stop rule blocked delegate_subcall at low remaining depth; "
+                        "synthesize evidence and finalize instead."
+                    )
+                    merged_gaps = draft_output.setdefault("gaps", [])
+                    if isinstance(merged_gaps, list) and depth_guard_message not in merged_gaps:
+                        merged_gaps.append(depth_guard_message)
+                    machine.transition("finalizing")
+                    machine.transition("completed")
+                    return RecursiveLoopResult(
+                        status="completed",
+                        output=draft_output or {},
+                        usage=usage,
+                        subcall_metadata=subcall_metadata,
+                        state_trajectory=machine.trajectory,
+                    )
                 sub_depth = depth + 1
                 subcall_reason = self._budget_reason(
                     budget=budget,
@@ -419,13 +562,93 @@ class RecursiveLoop:
                         budget_reason=subcall_reason,
                     )
 
-                subcall_actions = action.get("actions") or []
+                delegate_with_planner_value = action.get("use_planner", False)
+                if not isinstance(delegate_with_planner_value, bool):
+                    machine.transition("failed")
+                    return RecursiveLoopResult(
+                        status="failed",
+                        output=draft_output or None,
+                        usage=usage,
+                        subcall_metadata=subcall_metadata,
+                        state_trajectory=machine.trajectory,
+                        error_code="MODEL_OUTPUT_INVALID",
+                        error_message="delegate_subcall use_planner must be boolean when provided.",
+                    )
+                delegate_with_planner = bool(delegate_with_planner_value)
+                if delegate_with_planner and planner is None:
+                    machine.transition("failed")
+                    return RecursiveLoopResult(
+                        status="failed",
+                        output=draft_output or None,
+                        usage=usage,
+                        subcall_metadata=subcall_metadata,
+                        state_trajectory=machine.trajectory,
+                        error_code="MODEL_OUTPUT_INVALID",
+                        error_message="delegate_subcall with use_planner=true requires an active planner.",
+                    )
+                raw_subcall_actions = action.get("actions")
+                if raw_subcall_actions is None:
+                    raw_subcall_actions = []
+                if not isinstance(raw_subcall_actions, list):
+                    machine.transition("failed")
+                    return RecursiveLoopResult(
+                        status="failed",
+                        output=draft_output or None,
+                        usage=usage,
+                        subcall_metadata=subcall_metadata,
+                        state_trajectory=machine.trajectory,
+                        error_code="MODEL_OUTPUT_INVALID",
+                        error_message="delegate_subcall actions must be a list when provided.",
+                    )
+                subcall_actions = [dict(item) for item in raw_subcall_actions if isinstance(item, dict)]
+                if len(subcall_actions) != len(raw_subcall_actions):
+                    machine.transition("failed")
+                    return RecursiveLoopResult(
+                        status="failed",
+                        output=draft_output or None,
+                        usage=usage,
+                        subcall_metadata=subcall_metadata,
+                        state_trajectory=machine.trajectory,
+                        error_code="MODEL_OUTPUT_INVALID",
+                        error_message="delegate_subcall actions must contain only action objects.",
+                    )
+                if not delegate_with_planner and not subcall_actions:
+                    machine.transition("failed")
+                    return RecursiveLoopResult(
+                        status="failed",
+                        output=draft_output or None,
+                        usage=usage,
+                        subcall_metadata=subcall_metadata,
+                        state_trajectory=machine.trajectory,
+                        error_code="MODEL_OUTPUT_INVALID",
+                        error_message=(
+                            "delegate_subcall requires actions when use_planner is false."
+                        ),
+                    )
+                raw_subcall_context = action.get("context")
+                if raw_subcall_context is not None and not isinstance(raw_subcall_context, dict):
+                    machine.transition("failed")
+                    return RecursiveLoopResult(
+                        status="failed",
+                        output=draft_output or None,
+                        usage=usage,
+                        subcall_metadata=subcall_metadata,
+                        state_trajectory=machine.trajectory,
+                        error_code="MODEL_OUTPUT_INVALID",
+                        error_message="delegate_subcall context must be an object when provided.",
+                    )
+                subcall_context = None
+                if isinstance(raw_subcall_context, dict):
+                    subcall_context = {str(key): raw_subcall_context[key] for key in raw_subcall_context}
                 subcall_objective = str(action.get("objective") or f"subcall-{uuid4()}")
                 subcall_id = str(uuid4())
                 sub_started_at = utc_now_rfc3339()
                 child_result = self.run(
-                    actions=[dict(item) for item in subcall_actions if isinstance(item, dict)],
+                    actions=subcall_actions,
                     budget=budget,
+                    budget_pool=budget_pool,
+                    planner=planner if delegate_with_planner else None,
+                    delegation_context=subcall_context,
                     depth=sub_depth,
                     objective=subcall_objective,
                     parent_call_id=subcall_id,
@@ -455,8 +678,11 @@ class RecursiveLoop:
                         "started_at": sub_started_at,
                         "completed_at": sub_completed_at,
                         "status": child_status,
+                        "planner_driven": delegate_with_planner,
                     }
                 )
+                if budget_pool is not None:
+                    budget_pool.consume(subcalls=1, depth=sub_depth)
                 subcall_metadata.extend(child_result.subcall_metadata)
 
                 if isinstance(child_result.output, dict):
@@ -509,6 +735,8 @@ class RecursiveLoop:
             if action_type == "finalize":
                 machine.transition("finalizing")
                 usage.iterations += 1
+                if budget_pool is not None:
+                    budget_pool.consume(iterations=1, depth=depth)
                 output_payload = action.get("output")
                 if isinstance(output_payload, dict):
                     draft_output.update(output_payload)

@@ -96,12 +96,18 @@ def test_phase9_planner_scenario_harness_executes_five_representative_sequences(
                 "action": {
                     "type": "delegate_subcall",
                     "objective": "candidate tool_failure",
-                    "actions": [
-                        {"type": "synthesize", "output": {"evidence_refs": [], "gaps": []}},
-                        {"type": "finalize", "output": {"summary": "candidate done"}},
-                    ],
+                    "use_planner": True,
+                    "context": {"candidate_label": "tool_failure"},
                 }
             },
+            {
+                "action": {
+                    "type": "tool_call",
+                    "tool_name": "get_tool_io",
+                    "args": {"span_id": "root"},
+                }
+            },
+            {"action": {"type": "finalize", "output": {"summary": "candidate done"}}},
             {"action": {"type": "finalize", "output": {"summary": "rca hypothesis chosen"}}},
         ],
         "compliance_missing_evidence": [
@@ -160,4 +166,3 @@ def test_phase9_planner_scenario_harness_executes_five_representative_sequences(
         assert result.usage.tokens_in > 0, scenario_name
         assert result.usage.tokens_out > 0, scenario_name
         assert result.usage.cost_usd > 0.0, scenario_name
-

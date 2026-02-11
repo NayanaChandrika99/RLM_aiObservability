@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import inspect
 import hashlib
 import json
 from typing import Any
@@ -75,6 +76,61 @@ class ToolRegistry:
     def allowed_tools(self) -> set[str]:
         return set(self._allowed_tools)
 
+    def describe_tools(self) -> dict[str, dict[str, Any]]:
+        descriptions: dict[str, dict[str, Any]] = {}
+        for tool_name in sorted(self._allowed_tools):
+            if not hasattr(self._inspection_api, tool_name):
+                continue
+            method = getattr(self._inspection_api, tool_name)
+            required_args: list[str] = []
+            optional_args: list[str] = []
+            accepts_var_kwargs = False
+            try:
+                signature = inspect.signature(method)
+            except (TypeError, ValueError):
+                signature = None
+            if signature is not None:
+                for name, parameter in signature.parameters.items():
+                    if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+                        accepts_var_kwargs = True
+                        continue
+                    if parameter.kind not in {
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                        inspect.Parameter.KEYWORD_ONLY,
+                    }:
+                        continue
+                    if parameter.default is inspect._empty:
+                        required_args.append(str(name))
+                    else:
+                        optional_args.append(str(name))
+            descriptions[tool_name] = {
+                "required_args": sorted(required_args),
+                "optional_args": sorted(optional_args),
+                "accepts_var_kwargs": bool(accepts_var_kwargs),
+            }
+        return descriptions
+
+    @staticmethod
+    def _sanitize_call_args(method: Any, args: dict[str, Any]) -> dict[str, Any]:
+        try:
+            signature = inspect.signature(method)
+        except (TypeError, ValueError):
+            return dict(args)
+
+        accepts_var_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+        if accepts_var_kwargs:
+            return dict(args)
+
+        allowed_param_names = {
+            name
+            for name, parameter in signature.parameters.items()
+            if parameter.kind in {inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY}
+        }
+        return {name: args[name] for name in args if name in allowed_param_names}
+
     def call(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         if tool_name not in self._allowed_tools:
             raise SandboxViolationError(f"Tool not allowlisted: {tool_name}.")
@@ -84,12 +140,18 @@ class ToolRegistry:
             raise SandboxViolationError("Tool args must be an object.")
         normalized_args = _normalize(args)
         method = getattr(self._inspection_api, tool_name)
-        result = method(**normalized_args)
+        sanitized_args = self._sanitize_call_args(method, normalized_args)
+        try:
+            result = method(**sanitized_args)
+        except TypeError as exc:
+            raise SandboxViolationError(
+                f"Tool call argument mismatch for {tool_name}: {exc}"
+            ) from exc
         normalized_result = _normalize(result)
         return {
             "tool_name": tool_name,
-            "normalized_args": normalized_args,
-            "args_hash": _stable_hash(normalized_args),
+            "normalized_args": sanitized_args,
+            "args_hash": _stable_hash(sanitized_args),
             "result": normalized_result,
             "response_hash": _stable_hash(normalized_result),
         }

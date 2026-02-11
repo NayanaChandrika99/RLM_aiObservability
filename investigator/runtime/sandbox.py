@@ -57,12 +57,25 @@ class SandboxGuard:
             objective = str(action.get("objective") or "")
             if not objective:
                 raise SandboxViolationError("delegate_subcall requires objective.")
+            use_planner = action.get("use_planner", False)
+            if not isinstance(use_planner, bool):
+                raise SandboxViolationError("delegate_subcall use_planner must be boolean when provided.")
             actions = action.get("actions")
-            if not isinstance(actions, list):
-                raise SandboxViolationError("delegate_subcall requires actions list.")
-            for nested in actions:
-                if not isinstance(nested, dict):
-                    raise SandboxViolationError("delegate_subcall actions must contain action objects.")
+            if actions is None and not use_planner:
+                raise SandboxViolationError(
+                    "delegate_subcall requires actions list when use_planner is false."
+                )
+            if actions is not None:
+                if not isinstance(actions, list):
+                    raise SandboxViolationError("delegate_subcall actions must be a list when provided.")
+                for nested in actions:
+                    if not isinstance(nested, dict):
+                        raise SandboxViolationError("delegate_subcall actions must contain action objects.")
+            context = action.get("context")
+            if context is not None and not isinstance(context, dict):
+                raise SandboxViolationError("delegate_subcall context must be an object when provided.")
+            if context is not None and not _is_json_safe(context):
+                raise SandboxViolationError("delegate_subcall context contains unsupported value types.")
             return
 
         if action_type in {"synthesize", "finalize"}:

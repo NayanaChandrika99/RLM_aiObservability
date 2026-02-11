@@ -106,9 +106,10 @@ class _FakeModelClient:
     def __init__(self, outputs: list[dict[str, Any]]) -> None:
         self._outputs = list(outputs)
         self.calls = 0
+        self.requests: list[Any] = []
 
     def generate_structured(self, request):  # noqa: ANN001, ANN201
-        del request
+        self.requests.append(request)
         if not self._outputs:
             raise AssertionError("No fake outputs configured.")
         self.calls += 1
@@ -118,6 +119,19 @@ class _FakeModelClient:
             raw_text=json.dumps(payload, sort_keys=True),
             usage=StructuredGenerationUsage(tokens_in=70, tokens_out=15, cost_usd=0.03),
         )
+
+
+def _planner_context_from_request(request: Any) -> dict[str, Any]:
+    user_prompt = str(getattr(request, "user_prompt", ""))
+    prefix = "Runtime planner context JSON:\n"
+    suffix = "\n\nReturn only the next typed action object wrapped in the required schema."
+    if not user_prompt.startswith(prefix) or suffix not in user_prompt:
+        raise AssertionError("Planner request user_prompt format is unexpected.")
+    payload = user_prompt[len(prefix) : user_prompt.index(suffix)]
+    parsed = json.loads(payload)
+    if not isinstance(parsed, dict):
+        raise AssertionError("Planner context payload must be an object.")
+    return parsed
 
 
 def test_policy_compliance_recursive_runtime_emits_trajectory_and_subcalls(tmp_path: Path) -> None:
@@ -136,12 +150,12 @@ def test_policy_compliance_recursive_runtime_emits_trajectory_and_subcalls(tmp_p
                 "action": {
                     "type": "delegate_subcall",
                     "objective": "gather control evidence",
-                    "actions": [
-                        {"type": "synthesize", "output": {"evidence_refs": [], "gaps": []}},
-                        {"type": "finalize", "output": {"summary": "child done"}},
-                    ],
+                    "use_planner": True,
+                    "context": {"control_id": "control.execution.hard_failures"},
                 }
             },
+            {"action": {"type": "synthesize", "output": {"evidence_refs": [], "gaps": []}}},
+            {"action": {"type": "finalize", "output": {"summary": "child done"}}},
             {
                 "action": {
                     "type": "synthesize",
@@ -176,10 +190,18 @@ def test_policy_compliance_recursive_runtime_emits_trajectory_and_subcalls(tmp_p
     )
 
     assert report.controls_evaluated[0].pass_fail == "fail"
-    assert model_client.calls == 3
+    assert model_client.calls == 5
     assert run_record.runtime_ref.state_trajectory
     assert "delegating" in run_record.runtime_ref.state_trajectory
     assert run_record.runtime_ref.subcall_metadata
+    assert bool(run_record.runtime_ref.subcall_metadata[0].get("planner_driven")) is True
+    planner_context = _planner_context_from_request(model_client.requests[0])
+    delegation_policy = planner_context.get("delegation_policy")
+    assert isinstance(delegation_policy, dict)
+    assert bool(delegation_policy.get("prefer_planner_driven_subcalls")) is True
+    example_actions = delegation_policy.get("example_actions")
+    assert isinstance(example_actions, list) and example_actions
+    assert bool(example_actions[0].get("use_planner")) is True
     assert run_record.runtime_ref.usage.tokens_in > 0
     assert run_record.runtime_ref.usage.cost_usd > 0.0
 
@@ -220,6 +242,92 @@ def test_policy_compliance_recursive_runtime_budget_termination_maps_partial(tmp
         artifacts_root=tmp_path / "artifacts" / "investigator_runs",
     )
 
+    assert run_record.status == "partial"
+    assert run_record.error is not None
+    assert run_record.error.code == "RECURSION_LIMIT_REACHED"
+    assert "max_iterations" in run_record.error.message
+
+
+def test_policy_compliance_recursive_runtime_pools_budget_across_controls(tmp_path: Path) -> None:
+    controls = [
+        {
+            "control_id": "control.execution.hard_failures",
+            "controls_version": "controls-v1",
+            "severity": "high",
+            "required_evidence": [],
+            "remediation_template": "Address hard failures.",
+        },
+        {
+            "control_id": "control.retrieval.strict_sources",
+            "controls_version": "controls-v1",
+            "severity": "medium",
+            "required_evidence": [],
+            "remediation_template": "Review retrieval source policy.",
+        },
+    ]
+    model_client = _FakeModelClient(
+        outputs=[
+            {
+                "action": {
+                    "type": "synthesize",
+                    "output": {
+                        "pass_fail": "fail",
+                        "confidence": 0.81,
+                        "remediation": "Address hard failures and rerun.",
+                        "missing_evidence": [],
+                        "gaps": [],
+                    },
+                }
+            },
+            {"action": {"type": "finalize", "output": {"summary": "first control complete"}}},
+            {
+                "action": {
+                    "type": "synthesize",
+                    "output": {
+                        "pass_fail": "pass",
+                        "confidence": 0.62,
+                        "remediation": "No remediation needed.",
+                        "missing_evidence": [],
+                        "gaps": [],
+                    },
+                }
+            },
+            {
+                "action": {
+                    "type": "synthesize",
+                    "output": {
+                        "pass_fail": "pass",
+                        "confidence": 0.6,
+                        "remediation": "No remediation needed.",
+                        "missing_evidence": [],
+                        "gaps": [],
+                    },
+                }
+            },
+            {"action": {"type": "finalize", "output": {"summary": "second control complete"}}},
+        ]
+    )
+    engine = PolicyComplianceEngine(
+        inspection_api=_FakeComplianceInspectionAPI(controls=controls),
+        model_client=model_client,
+        use_llm_judgment=True,
+        use_recursive_runtime=True,
+        recursive_budget=RuntimeBudget(max_iterations=4),
+        fallback_on_llm_error=True,
+    )
+
+    _, run_record = run_engine(
+        engine=engine,
+        request=PolicyComplianceRequest(
+            trace_id="trace-cmp-recursive",
+            project_name="phase9",
+            controls_version="controls-v1",
+        ),
+        run_id="run-phase91-compliance-budget-pool",
+        artifacts_root=tmp_path / "artifacts" / "investigator_runs",
+    )
+
+    assert model_client.calls == 4
     assert run_record.status == "partial"
     assert run_record.error is not None
     assert run_record.error.code == "RECURSION_LIMIT_REACHED"

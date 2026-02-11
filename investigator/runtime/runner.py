@@ -76,6 +76,7 @@ def _collect_runtime_signals(
     str | None,
     list[str],
     list[dict[str, Any]],
+    list[dict[str, Any]],
 ]:
     runtime_signals: dict[str, Any] = {}
     if hasattr(engine, "get_runtime_signals"):
@@ -86,6 +87,7 @@ def _collect_runtime_signals(
         iterations=_safe_int(runtime_signals.get("iterations"), default=1),
         depth_reached=_safe_int(runtime_signals.get("depth_reached"), default=0),
         tool_calls=_safe_int(runtime_signals.get("tool_calls"), default=0),
+        llm_subcalls=_safe_int(runtime_signals.get("llm_subcalls"), default=0),
         tokens_in=_safe_int(runtime_signals.get("tokens_in"), default=0),
         tokens_out=_safe_int(runtime_signals.get("tokens_out"), default=0),
         cost_usd=_safe_float(runtime_signals.get("cost_usd"), default=0.0),
@@ -103,6 +105,8 @@ def _collect_runtime_signals(
     state_trajectory = [str(item) for item in raw_trajectory if str(item).strip()]
     raw_subcall_metadata = runtime_signals.get("subcall_metadata") or []
     subcall_metadata = [item for item in raw_subcall_metadata if isinstance(item, dict)]
+    raw_repl_trajectory = runtime_signals.get("repl_trajectory") or []
+    repl_trajectory = [item for item in raw_repl_trajectory if isinstance(item, dict)]
     return (
         usage,
         subcalls,
@@ -112,6 +116,7 @@ def _collect_runtime_signals(
         budget_reason,
         state_trajectory,
         subcall_metadata,
+        repl_trajectory,
     )
 
 
@@ -183,6 +188,7 @@ def run_engine(
             budget_reason,
             state_trajectory,
             subcall_metadata,
+            repl_trajectory,
         ) = _collect_runtime_signals(engine)
         model_provider = signal_model_provider or str(getattr(engine, "model_provider", "openai"))
         output_payload = output.to_dict() if hasattr(output, "to_dict") else {"output": str(output)}
@@ -205,6 +211,7 @@ def run_engine(
                 usage=usage,
                 state_trajectory=state_trajectory,
                 subcall_metadata=subcall_metadata,
+                repl_trajectory=repl_trajectory,
             ),
             output_ref=OutputRef(
                 artifact_type=engine.output_contract_name,
@@ -309,6 +316,7 @@ def run_engine(
             _,
             state_trajectory,
             subcall_metadata,
+            repl_trajectory,
         ) = _collect_runtime_signals(engine)
         if usage.iterations <= 0:
             usage.iterations = 1
@@ -338,6 +346,7 @@ def run_engine(
                 usage=usage,
                 state_trajectory=state_trajectory,
                 subcall_metadata=subcall_metadata,
+                repl_trajectory=repl_trajectory,
             ),
             output_ref=OutputRef(
                 artifact_type=engine.output_contract_name,

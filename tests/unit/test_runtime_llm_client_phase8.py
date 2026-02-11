@@ -152,3 +152,69 @@ def test_openai_model_client_omits_temperature_for_gpt5_models() -> None:
     assert result.output["primary_label"] == "tool_failure"
     assert fake_client.responses.last_create_kwargs is not None
     assert "temperature" not in fake_client.responses.last_create_kwargs
+
+
+def test_openai_model_client_generate_text_sets_minimal_reasoning_for_gpt5() -> None:
+    fake_client = _FakeOpenAIClient(
+        _FakeResponse(
+            output_text="hello from gpt5",
+            input_tokens=21,
+            output_tokens=5,
+        )
+    )
+    client = OpenAIModelClient(openai_client=fake_client)
+
+    result = client.generate_text(
+        model_name="gpt-5-mini",
+        temperature=0.0,
+        system_prompt="Return one short sentence.",
+        user_prompt="Say hello.",
+        max_output_tokens=64,
+    )
+
+    assert result.text == "hello from gpt5"
+    assert fake_client.responses.last_create_kwargs is not None
+    assert fake_client.responses.last_create_kwargs["reasoning"] == {"effort": "minimal"}
+    assert "temperature" not in fake_client.responses.last_create_kwargs
+
+
+def test_openai_model_client_generate_text_keeps_temperature_for_non_gpt5() -> None:
+    fake_client = _FakeOpenAIClient(
+        _FakeResponse(
+            output_text="hello from non-gpt5",
+            input_tokens=18,
+            output_tokens=4,
+        )
+    )
+    client = OpenAIModelClient(openai_client=fake_client)
+
+    result = client.generate_text(
+        model_name="gpt-4o-mini",
+        temperature=0.3,
+        system_prompt="Return one short sentence.",
+        user_prompt="Say hello.",
+        max_output_tokens=64,
+    )
+
+    assert result.text == "hello from non-gpt5"
+    assert fake_client.responses.last_create_kwargs is not None
+    assert "reasoning" not in fake_client.responses.last_create_kwargs
+    assert fake_client.responses.last_create_kwargs["temperature"] == 0.3
+
+
+def test_openai_model_client_sets_default_request_timeout() -> None:
+    fake_client = _FakeOpenAIClient(
+        _FakeResponse(
+            output_text=(
+                '{"primary_label":"tool_failure","summary":"Tool call failed","confidence":0.71,'
+                '"remediation":["Retry tool call"],"gaps":[]}'
+            ),
+            input_tokens=9,
+            output_tokens=4,
+        )
+    )
+    client = OpenAIModelClient(openai_client=fake_client)
+    _ = client.generate_structured(_request())
+
+    assert fake_client.responses.last_create_kwargs is not None
+    assert fake_client.responses.last_create_kwargs["timeout"] == 120.0

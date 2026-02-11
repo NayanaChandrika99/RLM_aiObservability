@@ -8,6 +8,7 @@ import json
 from typing import Any
 
 from investigator.inspection_api import PhoenixInspectionAPI
+from investigator.runtime.budget_pool import RuntimeBudgetPool
 from investigator.runtime.llm_client import (
     ModelOutputInvalidError,
     OpenAIModelClient,
@@ -163,6 +164,40 @@ class IncidentDossierEngine:
         if normalized in _ALLOWED_ACTION_TYPES:
             return normalized
         return "follow_up_fix"
+
+    @staticmethod
+    def _delegation_policy(*, scope: str, trace_id: str | None = None) -> dict[str, Any]:
+        if scope == "per_trace_drilldown":
+            trace_value = str(trace_id or "trace-unknown")
+            return {
+                "prefer_planner_driven_subcalls": True,
+                "goal": "Delegate focused drilldowns for candidate failure signatures inside the representative trace.",
+                "example_actions": [
+                    {
+                        "type": "delegate_subcall",
+                        "objective": f"drill down error branch for trace={trace_value}",
+                        "use_planner": True,
+                        "context": {
+                            "trace_id": trace_value,
+                            "focus": "collect branch-level evidence for repeated error signatures",
+                        },
+                    }
+                ],
+            }
+        return {
+            "prefer_planner_driven_subcalls": True,
+            "goal": "Delegate focused cluster investigations before cross-trace finalize.",
+            "example_actions": [
+                {
+                    "type": "delegate_subcall",
+                    "objective": "investigate cluster signature for cross-trace synthesis",
+                    "use_planner": True,
+                    "context": {
+                        "focus": "collect representative evidence for one repeated signature cluster",
+                    },
+                }
+            ],
+        }
 
     @staticmethod
     def _dedupe_evidence_refs(evidence_refs: list[EvidenceRef]) -> list[EvidenceRef]:
@@ -600,6 +635,10 @@ class IncidentDossierEngine:
                 "evidence_refs": [self._evidence_dict(ref) for ref in suspected_change.evidence_refs[:3]],
             },
             "timeline": timeline_snapshot,
+            "delegation_policy": self._delegation_policy(
+                scope="per_trace_drilldown",
+                trace_id=representative_trace.trace_id,
+            ),
         }
         model_client = self._resolve_model_client()
         model_provider = str(getattr(model_client, "model_provider", self.model_provider) or "openai")
@@ -720,6 +759,8 @@ class IncidentDossierEngine:
         suspected_change: SuspectedChange,
         runtime_tracker: dict[str, Any],
         usage_total: StructuredGenerationUsage,
+        loop_budget: RuntimeBudget,
+        budget_pool: RuntimeBudgetPool,
     ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]], list[str], float]:
         model_client = self._resolve_model_client()
         model_provider = str(getattr(model_client, "model_provider", self.model_provider) or "openai")
@@ -750,6 +791,10 @@ class IncidentDossierEngine:
                 "start": request.time_window_start,
                 "end": request.time_window_end,
             },
+            "delegation_policy": self._delegation_policy(
+                scope="per_trace_drilldown",
+                trace_id=representative_trace.trace_id,
+            ),
             "representative_trace": {
                 "trace_id": representative_trace.trace_id,
                 "why_selected": representative_trace.why_selected,
@@ -784,7 +829,8 @@ class IncidentDossierEngine:
         loop_result = recursive_loop.run(
             actions=[],
             planner=_planner,
-            budget=self._recursive_budget,
+            budget=loop_budget,
+            budget_pool=budget_pool,
             objective=f"incident per-trace drilldown trace={representative_trace.trace_id}",
             parent_call_id=f"incident:trace:{representative_trace.trace_id}",
             input_ref_hash=hash_excerpt(representative_trace.trace_id),
@@ -836,6 +882,8 @@ class IncidentDossierEngine:
         raw_actions: list[dict[str, Any]],
         runtime_tracker: dict[str, Any],
         usage_total: StructuredGenerationUsage,
+        loop_budget: RuntimeBudget,
+        budget_pool: RuntimeBudgetPool,
     ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]], list[str], float]:
         model_client = self._resolve_model_client()
         model_provider = str(getattr(model_client, "model_provider", self.model_provider) or "openai")
@@ -899,6 +947,7 @@ class IncidentDossierEngine:
             "representative_profiles": representative_snapshot,
             "trace_hypotheses": normalized_hypotheses,
             "trace_actions": normalized_actions,
+            "delegation_policy": self._delegation_policy(scope="cross_trace_synthesis"),
         }
 
         def _planner(context: dict[str, Any]) -> dict[str, Any]:
@@ -912,7 +961,8 @@ class IncidentDossierEngine:
         loop_result = recursive_loop.run(
             actions=[],
             planner=_planner,
-            budget=self._recursive_budget,
+            budget=loop_budget,
+            budget_pool=budget_pool,
             objective="incident cross-trace synthesis",
             parent_call_id="incident:cross-trace",
             input_ref_hash=hash_excerpt(f"{request.project_name}:{request.time_window_start}:{request.time_window_end}"),
@@ -1136,10 +1186,18 @@ class IncidentDossierEngine:
                 raw_actions: list[dict[str, Any]] = []
                 llm_summaries: list[str] = []
                 llm_confidences: list[float] = []
+                recursive_budget_pool: RuntimeBudgetPool | None = None
+                if self._use_recursive_runtime:
+                    recursive_budget_pool = RuntimeBudgetPool(budget=self._recursive_budget)
 
-                for profile, representative_trace in zip(representative_profiles, representative_traces):
+                for index, (profile, representative_trace) in enumerate(
+                    zip(representative_profiles, representative_traces)
+                ):
                     try:
                         if self._use_recursive_runtime:
+                            if recursive_budget_pool is None:
+                                raise RuntimeError("Incident recursive budget pool was not initialized.")
+                            remaining_scopes = max(1, len(representative_traces) - index + 1)
                             (
                                 trace_summary,
                                 trace_hypotheses,
@@ -1154,6 +1212,10 @@ class IncidentDossierEngine:
                                 suspected_change=suspected_change,
                                 runtime_tracker=runtime_tracker,
                                 usage_total=usage_total,
+                                loop_budget=recursive_budget_pool.allocate_run_budget(
+                                    sibling_count=remaining_scopes,
+                                ),
+                                budget_pool=recursive_budget_pool,
                             )
                         else:
                             runtime_tracker["llm_calls"] = int(runtime_tracker.get("llm_calls") or 0) + 1
@@ -1237,6 +1299,8 @@ class IncidentDossierEngine:
 
                 if self._use_recursive_runtime:
                     try:
+                        if recursive_budget_pool is None:
+                            raise RuntimeError("Incident recursive budget pool was not initialized.")
                         (
                             cross_summary,
                             cross_hypotheses,
@@ -1250,6 +1314,10 @@ class IncidentDossierEngine:
                             raw_actions=raw_actions,
                             runtime_tracker=runtime_tracker,
                             usage_total=usage_total,
+                            loop_budget=recursive_budget_pool.allocate_run_budget(
+                                sibling_count=1,
+                            ),
+                            budget_pool=recursive_budget_pool,
                         )
                         if cross_summary:
                             llm_summaries.append(cross_summary)

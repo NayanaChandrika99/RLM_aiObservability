@@ -1,0 +1,130 @@
+{
+  "baseline": {
+    "accuracy": 0.8
+  },
+  "delta": {
+    "accuracy": 0.19999999999999996
+  },
+  "elapsed_sec_total": 252.265,
+  "failed_count": 0,
+  "generated_at_utc": "2026-02-11T02:34:49Z",
+  "partial_rate": 0.0,
+  "proof_run_id": "phase10-compliance-only-canary-5-20260211T023031Z",
+  "records": [
+    {
+      "baseline_compliance_verdict": "non_compliant",
+      "elapsed_sec": 51.481,
+      "error": null,
+      "expected_compliance_verdict": "non_compliant",
+      "expected_label": "data_schema_mismatch",
+      "predicted_verdict": "non_compliant",
+      "run_id": "phase10-compliance-only-canary-5-20260211T023031Z-compliance-0001",
+      "status": "succeeded",
+      "trace_id": "0a1f866d569d238b554abb6d8e047f94",
+      "usage": {
+        "cost_usd": 0.01000125,
+        "depth_reached": 0,
+        "iterations": 2,
+        "llm_subcalls": 1,
+        "tokens_in": 3117,
+        "tokens_out": 4611,
+        "tool_calls": 0
+      }
+    },
+    {
+      "baseline_compliance_verdict": "non_compliant",
+      "elapsed_sec": 55.415,
+      "error": null,
+      "expected_compliance_verdict": "non_compliant",
+      "expected_label": "data_schema_mismatch",
+      "predicted_verdict": "non_compliant",
+      "run_id": "phase10-compliance-only-canary-5-20260211T023031Z-compliance-0002",
+      "status": "succeeded",
+      "trace_id": "12bbd1c0b467a5c7334735002cd90706",
+      "usage": {
+        "cost_usd": 0.01004625,
+        "depth_reached": 0,
+        "iterations": 2,
+        "llm_subcalls": 2,
+        "tokens_in": 3249,
+        "tokens_out": 4617,
+        "tool_calls": 0
+      }
+    },
+    {
+      "baseline_compliance_verdict": "non_compliant",
+      "elapsed_sec": 26.645,
+      "error": null,
+      "expected_compliance_verdict": "non_compliant",
+      "expected_label": "tool_failure",
+      "predicted_verdict": "non_compliant",
+      "run_id": "phase10-compliance-only-canary-5-20260211T023031Z-compliance-0003",
+      "status": "succeeded",
+      "trace_id": "170889997d66deb8fba354dde56a33d2",
+      "usage": {
+        "cost_usd": 0.0052535,
+        "depth_reached": 0,
+        "iterations": 1,
+        "llm_subcalls": 0,
+        "tokens_in": 1502,
+        "tokens_out": 2439,
+        "tool_calls": 0
+      }
+    },
+    {
+      "baseline_compliance_verdict": "non_compliant",
+      "elapsed_sec": 52.243,
+      "error": null,
+      "expected_compliance_verdict": "non_compliant",
+      "expected_label": "data_schema_mismatch",
+      "predicted_verdict": "non_compliant",
+      "run_id": "phase10-compliance-only-canary-5-20260211T023031Z-compliance-0004",
+      "status": "succeeded",
+      "trace_id": "2092f4d7418919ec23e027777ec5c61b",
+      "usage": {
+        "cost_usd": 0.0102485,
+        "depth_reached": 0,
+        "iterations": 2,
+        "llm_subcalls": 1,
+        "tokens_in": 3114,
+        "tokens_out": 4735,
+        "tool_calls": 0
+      }
+    },
+    {
+      "baseline_compliance_verdict": "compliant",
+      "elapsed_sec": 66.239,
+      "error": null,
+      "expected_compliance_verdict": "needs_review",
+      "expected_label": "retrieval_failure",
+      "predicted_verdict": "needs_review",
+      "run_id": "phase10-compliance-only-canary-5-20260211T023031Z-compliance-0005",
+      "status": "succeeded",
+      "trace_id": "27322f914e540749cc5dbbeb4d08a7ae",
+      "usage": {
+        "cost_usd": 0.011327,
+        "depth_reached": 0,
+        "iterations": 2,
+        "llm_subcalls": 2,
+        "tokens_in": 3308,
+        "tokens_out": 5250,
+        "tool_calls": 0
+      }
+    }
+  ],
+  "repl": {
+    "accuracy": 1.0
+  },
+  "sample_count": 5,
+  "selected_trace_ids": [
+    "0a1f866d569d238b554abb6d8e047f94",
+    "12bbd1c0b467a5c7334735002cd90706",
+    "170889997d66deb8fba354dde56a33d2",
+    "2092f4d7418919ec23e027777ec5c61b",
+    "27322f914e540749cc5dbbeb4d08a7ae"
+  ],
+  "status_counts": {
+    "succeeded": 5
+  },
+  "wall_time_partials": 0
+}

@@ -31,6 +31,10 @@ _PROMPT_PATHS = {
         "runtime/recursive_runtime_action_v1.md",
         "runtime/recursive_runtime_action_v1.schema.json",
     ),
+    "repl_runtime_step_v1": (
+        "runtime/repl_runtime_step_v1.md",
+        "runtime/repl_runtime_step_v1.schema.json",
+    ),
 }
 
 

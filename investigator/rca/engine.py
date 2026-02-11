@@ -18,6 +18,7 @@ from investigator.runtime.llm_client import (
 )
 from investigator.runtime.llm_loop import run_structured_generation_loop
 from investigator.runtime.prompt_registry import PromptDefinition, get_prompt_definition
+from investigator.runtime.repl_loop import ReplLoop
 from investigator.runtime.recursive_loop import RecursiveLoop
 from investigator.runtime.recursive_planner import StructuredActionPlanner
 from investigator.runtime.sandbox import SandboxGuard
@@ -41,6 +42,7 @@ class TraceRCARequest:
 _TRACE_RCA_PROMPT_ID = "rca_trace_judgment_v1"
 _TRACE_RCA_PROMPT_DEFINITION = get_prompt_definition(_TRACE_RCA_PROMPT_ID)
 _RECURSIVE_RCA_PROMPT_ID = "recursive_runtime_action_v1"
+_REPL_RCA_PROMPT_ID = "repl_runtime_step_v1"
 _ALLOWED_RCA_LABELS = {
     "retrieval_failure",
     "tool_failure",
@@ -69,6 +71,7 @@ class TraceRCAEngine:
         max_branch_nodes: int = 30,
         use_llm_judgment: bool = False,
         use_recursive_runtime: bool = False,
+        use_repl_runtime: bool = False,
         recursive_budget: RuntimeBudget | None = None,
         fallback_on_llm_error: bool = False,
     ) -> None:
@@ -79,6 +82,7 @@ class TraceRCAEngine:
         self._max_branch_nodes = max_branch_nodes
         self._use_llm_judgment = use_llm_judgment
         self._use_recursive_runtime = use_recursive_runtime
+        self._use_repl_runtime = use_repl_runtime
         self._recursive_budget = recursive_budget or RuntimeBudget(
             max_iterations=12,
             max_depth=max_branch_depth,
@@ -88,7 +92,9 @@ class TraceRCAEngine:
         )
         self._fallback_on_llm_error = fallback_on_llm_error
         self._prompt_definition: PromptDefinition = _TRACE_RCA_PROMPT_DEFINITION
-        if self._use_llm_judgment and self._use_recursive_runtime:
+        if self._use_llm_judgment and self._use_repl_runtime:
+            self._prompt_definition = get_prompt_definition(_REPL_RCA_PROMPT_ID)
+        elif self._use_llm_judgment and self._use_recursive_runtime:
             self._prompt_definition = get_prompt_definition(_RECURSIVE_RCA_PROMPT_ID)
         self.prompt_template_hash = self._prompt_definition.prompt_template_hash
         self._runtime_signals: dict[str, object] = self._base_runtime_signals()
@@ -104,6 +110,7 @@ class TraceRCAEngine:
             "iterations": 1,
             "depth_reached": 0,
             "tool_calls": 0,
+            "llm_subcalls": 0,
             "tokens_in": 0,
             "tokens_out": 0,
             "cost_usd": 0.0,
@@ -113,6 +120,7 @@ class TraceRCAEngine:
             "budget_reason": "",
             "state_trajectory": [],
             "subcall_metadata": [],
+            "repl_trajectory": [],
             "subcalls": 0,
         }
 
@@ -276,6 +284,7 @@ class TraceRCAEngine:
         for candidate in candidates:
             summary = candidate["summary"]
             status_text = candidate["status_text"]
+            span_name = str(summary.get("name") or "").lower()
             span_kind = str(summary.get("span_kind") or "UNKNOWN")
             status_code = str(summary.get("status_code") or "UNSET")
             tool_io = candidate.get("tool_io")
@@ -292,7 +301,10 @@ class TraceRCAEngine:
             if span_kind == "TOOL" and (status_code == "ERROR" or tool_status_error):
                 has_tool_failure = True
 
-            if span_kind == "RETRIEVER":
+            is_retriever_span = span_kind == "RETRIEVER" or (
+                span_kind == "UNKNOWN" and span_name.startswith("retriever.")
+            )
+            if is_retriever_span:
                 if status_code == "ERROR" or len(retrieval_chunks) == 0:
                     has_retrieval_failure = True
 
@@ -400,6 +412,154 @@ class TraceRCAEngine:
             "retrieval_chunk_count": len(retrieval_chunks),
         }
 
+    @staticmethod
+    def _delegation_policy() -> dict[str, Any]:
+        return {
+            "prefer_planner_driven_subcalls": True,
+            "goal": "Run focused per-label hypothesis investigations before selecting primary_label.",
+            "example_actions": [
+                {
+                    "type": "delegate_subcall",
+                    "objective": "evaluate hypothesis label=tool_failure",
+                    "use_planner": True,
+                    "context": {
+                        "candidate_label": "tool_failure",
+                        "focus": "collect tool IO and child-span evidence supporting or refuting tool failure",
+                    },
+                },
+                {
+                    "type": "delegate_subcall",
+                    "objective": "evaluate hypothesis label=retrieval_failure",
+                    "use_planner": True,
+                    "context": {
+                        "candidate_label": "retrieval_failure",
+                        "focus": "collect retrieval chunk quality and retriever error evidence",
+                    },
+                },
+            ],
+        }
+
+    @staticmethod
+    def _tighten_repl_trace_budget(loop_budget: RuntimeBudget) -> RuntimeBudget:
+        max_tokens_total = loop_budget.max_tokens_total
+        if max_tokens_total is not None:
+            max_tokens_total = max(4000, min(int(max_tokens_total), 18000))
+        max_cost_usd = loop_budget.max_cost_usd
+        if max_cost_usd is not None:
+            max_cost_usd = min(float(max_cost_usd), 0.12)
+        return RuntimeBudget(
+            max_iterations=1,
+            max_depth=max(0, int(loop_budget.max_depth)),
+            max_tool_calls=max(1, min(int(loop_budget.max_tool_calls), 6)),
+            max_subcalls=max(1, min(int(loop_budget.max_subcalls), 2)),
+            max_tokens_total=max_tokens_total,
+            max_cost_usd=max_cost_usd,
+            sampling_seed=loop_budget.sampling_seed,
+            max_wall_time_sec=max(20, min(int(loop_budget.max_wall_time_sec), 45)),
+        )
+
+    def _repl_llm_rca_judgment(
+        self,
+        *,
+        request: TraceRCARequest,
+        inspection_api: Any,
+        hot_candidates: list[dict[str, Any]],
+        deterministic_label: str,
+        evidence_refs: list[EvidenceRef],
+    ) -> tuple[str, str, float, list[str], list[str]]:
+        model_client = self._resolve_model_client()
+        model_provider = str(getattr(model_client, "model_provider", self.model_provider) or "openai")
+        self.prompt_template_hash = get_prompt_definition(_REPL_RCA_PROMPT_ID).prompt_template_hash
+        self._runtime_signals["model_provider"] = model_provider
+        self._runtime_signals["rca_judgment_mode"] = "repl_llm"
+
+        repl_loop = ReplLoop(
+            tool_registry=ToolRegistry(inspection_api=inspection_api),
+            model_client=model_client,
+            model_name=self.model_name,
+            temperature=self.temperature,
+        )
+        tuned_loop_budget = self._tighten_repl_trace_budget(self._recursive_budget)
+        loop_result = repl_loop.run(
+            objective=f"trace_rca repl investigation for trace {request.trace_id}",
+            input_vars={
+                "trace_id": request.trace_id,
+                "allowed_labels": sorted(_ALLOWED_RCA_LABELS),
+                "deterministic_label_hint": deterministic_label,
+                "candidate_summaries": [
+                    self._candidate_snapshot(candidate)
+                    for candidate in hot_candidates[: self._max_hot_spans]
+                ],
+                "evidence_seed": [self._evidence_dict(ref) for ref in evidence_refs[:20]],
+            },
+            budget=tuned_loop_budget,
+            require_subquery_for_non_trivial=True,
+        )
+
+        self._runtime_signals["iterations"] = max(1, int(loop_result.usage.iterations))
+        self._runtime_signals["depth_reached"] = int(loop_result.usage.depth_reached)
+        self._runtime_signals["tool_calls"] = int(loop_result.usage.tool_calls)
+        self._runtime_signals["llm_subcalls"] = int(loop_result.usage.llm_subcalls)
+        self._runtime_signals["tokens_in"] = int(loop_result.usage.tokens_in)
+        self._runtime_signals["tokens_out"] = int(loop_result.usage.tokens_out)
+        self._runtime_signals["cost_usd"] = float(loop_result.usage.cost_usd)
+        self._runtime_signals["runtime_state"] = str(loop_result.status)
+        self._runtime_signals["budget_reason"] = str(loop_result.budget_reason or "")
+        self._runtime_signals["state_trajectory"] = list(loop_result.state_trajectory)
+        self._runtime_signals["subcall_metadata"] = []
+        self._runtime_signals["repl_trajectory"] = list(loop_result.repl_trajectory)
+        self._runtime_signals["subcalls"] = int(loop_result.usage.llm_subcalls)
+
+        if loop_result.error_code == "SANDBOX_VIOLATION":
+            self._runtime_signals["sandbox_violations"] = [str(loop_result.error_message or "")]
+
+        if loop_result.status == "failed":
+            if loop_result.error_code == "MODEL_OUTPUT_INVALID":
+                raise ModelOutputInvalidError(
+                    loop_result.error_message or "REPL RCA runtime output was invalid."
+                )
+            raise RuntimeError(loop_result.error_message or "REPL RCA runtime failed.")
+
+        payload = loop_result.output if isinstance(loop_result.output, dict) else {}
+        label_candidate = str(payload.get("primary_label") or "").strip()
+        label = label_candidate if label_candidate in _ALLOWED_RCA_LABELS else deterministic_label
+
+        summary = str(payload.get("summary") or "").strip()
+        if not summary:
+            if loop_result.status == "terminated_budget":
+                summary = (
+                    "REPL RCA runtime reached budget limits before finalize; "
+                    f"deterministic label {label} was retained."
+                )
+            else:
+                summary = f"REPL RCA judgment selected label {label}."
+
+        confidence_raw = payload.get("confidence")
+        if isinstance(confidence_raw, (int, float)):
+            confidence = max(0.0, min(1.0, float(confidence_raw)))
+        else:
+            confidence = self._confidence_from_evidence(label, evidence_refs)
+
+        remediation_payload = payload.get("remediation")
+        remediation: list[str] = []
+        if isinstance(remediation_payload, list):
+            remediation = [str(item).strip() for item in remediation_payload if str(item).strip()]
+        elif isinstance(remediation_payload, str) and remediation_payload.strip():
+            remediation = [remediation_payload.strip()]
+        if not remediation:
+            remediation = self._remediation_for_label(label)
+
+        llm_gaps: list[str] = []
+        gaps_payload = payload.get("gaps")
+        if isinstance(gaps_payload, list):
+            llm_gaps.extend([str(item).strip() for item in gaps_payload if str(item).strip()])
+        if loop_result.status == "terminated_budget":
+            llm_gaps.append(
+                loop_result.budget_reason
+                or "REPL runtime reached a budget limit before finalize."
+            )
+        return label, summary, confidence, remediation, llm_gaps
+
     def _recursive_llm_rca_judgment(
         self,
         *,
@@ -434,6 +594,7 @@ class TraceRCAEngine:
                 for candidate in hot_candidates[: self._max_hot_spans]
             ],
             "evidence_refs": [self._evidence_dict(ref) for ref in evidence_refs[:20]],
+            "delegation_policy": self._delegation_policy(),
         }
 
         def _planner(context: dict[str, Any]) -> dict[str, Any]:
@@ -496,6 +657,8 @@ class TraceRCAEngine:
         remediation: list[str] = []
         if isinstance(remediation_payload, list):
             remediation = [str(item).strip() for item in remediation_payload if str(item).strip()]
+        elif isinstance(remediation_payload, str) and remediation_payload.strip():
+            remediation = [remediation_payload.strip()]
         if not remediation:
             remediation = self._remediation_for_label(label)
 
@@ -574,6 +737,8 @@ class TraceRCAEngine:
         remediation: list[str] = []
         if isinstance(remediation_payload, list):
             remediation = [str(item).strip() for item in remediation_payload if str(item).strip()]
+        elif isinstance(remediation_payload, str) and remediation_payload.strip():
+            remediation = [remediation_payload.strip()]
         if not remediation:
             remediation = self._remediation_for_label(label)
         gaps_payload = payload.get("gaps")
@@ -718,7 +883,15 @@ class TraceRCAEngine:
         remediation = self._remediation_for_label(label)
         if self._use_llm_judgment:
             try:
-                if self._use_recursive_runtime:
+                if self._use_repl_runtime:
+                    label, summary, confidence, remediation, llm_gaps = self._repl_llm_rca_judgment(
+                        request=request,
+                        inspection_api=inspection_api,
+                        hot_candidates=hot_candidates,
+                        deterministic_label=label,
+                        evidence_refs=deduped,
+                    )
+                elif self._use_recursive_runtime:
                     label, summary, confidence, remediation, llm_gaps = self._recursive_llm_rca_judgment(
                         request=request,
                         inspection_api=inspection_api,

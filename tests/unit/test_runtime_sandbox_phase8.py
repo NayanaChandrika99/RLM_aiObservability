@@ -39,3 +39,28 @@ def test_sandbox_rejects_non_mapping_tool_args() -> None:
                 "args": ["not", "a", "mapping"],
             }
         )
+
+
+def test_sandbox_allows_delegate_subcall_with_use_planner_and_context() -> None:
+    guard = SandboxGuard(allowed_tools={"list_spans"})
+
+    guard.validate_action(
+        {
+            "type": "delegate_subcall",
+            "objective": "child investigation",
+            "use_planner": True,
+            "context": {"candidate_label": "tool_failure"},
+        }
+    )
+
+
+def test_sandbox_rejects_delegate_subcall_without_actions_when_not_planner_driven() -> None:
+    guard = SandboxGuard(allowed_tools={"list_spans"})
+
+    with pytest.raises(SandboxViolationError):
+        guard.validate_action(
+            {
+                "type": "delegate_subcall",
+                "objective": "child investigation",
+            }
+        )

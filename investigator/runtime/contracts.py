@@ -50,6 +50,7 @@ class RuntimeUsage:
     iterations: int = 0
     depth_reached: int = 0
     tool_calls: int = 0
+    llm_subcalls: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
     cost_usd: float = 0.0
@@ -87,6 +88,7 @@ class RuntimeRef:
     usage: RuntimeUsage
     state_trajectory: list[str] = field(default_factory=list)
     subcall_metadata: list[dict[str, Any]] = field(default_factory=list)
+    repl_trajectory: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass

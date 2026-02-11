@@ -19,6 +19,15 @@ class _InspectionAPI:
         return [{"trace_id": trace_id, "span_id": "root"}]
 
 
+class _InspectionAPIWithConfig:
+    def get_config_diff(self, base_snapshot_id: str, target_snapshot_id: str) -> dict[str, Any]:
+        return {
+            "base_snapshot_id": base_snapshot_id,
+            "target_snapshot_id": target_snapshot_id,
+            "artifact_id": "configdiff:test",
+        }
+
+
 def test_recursive_loop_terminates_budget_when_subcall_depth_exceeded() -> None:
     registry = ToolRegistry(inspection_api=_InspectionAPI())
     guard = SandboxGuard(allowed_tools=registry.allowed_tools)
@@ -56,6 +65,73 @@ def test_recursive_loop_fails_fast_on_sandbox_violation() -> None:
                 "type": "tool_call",
                 "tool_name": "forbidden_tool",
                 "args": {"trace_id": "trace-1"},
+            }
+        ],
+        budget=RuntimeBudget(),
+    )
+
+    assert result.status == "failed"
+    assert result.error_code == "SANDBOX_VIOLATION"
+
+
+def test_tool_registry_drops_unknown_kwargs_before_tool_invocation() -> None:
+    registry = ToolRegistry(inspection_api=_InspectionAPIWithConfig())
+    payload = registry.call(
+        "get_config_diff",
+        {
+            "base_snapshot_id": "snap-a",
+            "target_snapshot_id": "snap-b",
+            "project_name": "phase9-live",
+        },
+    )
+
+    assert payload["normalized_args"] == {
+        "base_snapshot_id": "snap-a",
+        "target_snapshot_id": "snap-b",
+    }
+    assert payload["result"]["artifact_id"] == "configdiff:test"
+
+
+def test_recursive_loop_records_tool_argument_mismatch_and_continues() -> None:
+    registry = ToolRegistry(inspection_api=_InspectionAPIWithConfig())
+    guard = SandboxGuard(allowed_tools=registry.allowed_tools)
+    loop = RecursiveLoop(tool_registry=registry, sandbox_guard=guard)
+
+    result = loop.run(
+        actions=[
+            {
+                "type": "tool_call",
+                "tool_name": "get_config_diff",
+                "args": {"project_name": "phase9-live"},
+            },
+            {"type": "finalize", "output": {"summary": "continued after tool error"}},
+        ],
+        budget=RuntimeBudget(),
+    )
+
+    assert result.status == "completed"
+    assert isinstance(result.output, dict)
+    tool_calls = result.output.get("tool_calls")
+    assert isinstance(tool_calls, list) and tool_calls
+    first_call = tool_calls[0]
+    assert isinstance(first_call, dict)
+    call_result = first_call.get("result")
+    assert isinstance(call_result, dict)
+    assert call_result.get("error_code") == "SANDBOX_VIOLATION"
+
+
+def test_recursive_loop_fails_on_fatal_tool_argument_mismatch() -> None:
+    registry = ToolRegistry(inspection_api=_InspectionAPIWithConfig())
+    guard = SandboxGuard(allowed_tools=registry.allowed_tools)
+    loop = RecursiveLoop(tool_registry=registry, sandbox_guard=guard)
+
+    result = loop.run(
+        actions=[
+            {
+                "type": "tool_call",
+                "tool_name": "get_config_diff",
+                "args": {"project_name": "phase9-live"},
+                "fatal": True,
             }
         ],
         budget=RuntimeBudget(),

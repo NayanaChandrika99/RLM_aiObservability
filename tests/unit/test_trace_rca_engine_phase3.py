@@ -198,6 +198,30 @@ def test_trace_rca_detects_retrieval_failure_from_empty_chunks() -> None:
     assert report.primary_label == "retrieval_failure"
 
 
+def test_trace_rca_inferrs_retriever_span_from_name_when_kind_unknown() -> None:
+    spans = [
+        _Span(
+            span_id="s-retriever-unknown",
+            trace_id="trace-3b",
+            parent_id=None,
+            name="retriever.fetch",
+            span_kind="UNKNOWN",
+            status_code="OK",
+            status_message="",
+            latency_ms=95.0,
+            events=[],
+        )
+    ]
+    engine = TraceRCAEngine(
+        inspection_api=_FakeInspectionAPI(
+            spans=spans,
+            retrieval_chunks_by_span={"s-retriever-unknown": []},
+        )
+    )
+    report = engine.run(TraceRCARequest(trace_id="trace-3b", project_name="phase3"))
+    assert report.primary_label == "retrieval_failure"
+
+
 def test_trace_rca_fallback_when_inspection_api_fails() -> None:
     class _BrokenAPI:
         def list_spans(self, trace_id: str) -> list[dict[str, Any]]:

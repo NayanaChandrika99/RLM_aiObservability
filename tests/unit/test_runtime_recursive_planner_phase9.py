@@ -122,6 +122,105 @@ def test_recursive_loop_records_subcall_metadata_for_planner_delegate() -> None:
     assert result.subcall_metadata
 
 
+def test_recursive_loop_delegate_subcall_can_use_child_planner_and_context() -> None:
+    registry = ToolRegistry(inspection_api=_InspectionAPI())
+    guard = SandboxGuard(allowed_tools=registry.allowed_tools)
+    loop = RecursiveLoop(tool_registry=registry, sandbox_guard=guard)
+
+    planner_contexts: list[dict[str, Any]] = []
+    root_calls = {"count": 0}
+    child_calls = {"count": 0}
+
+    def _planner(context: dict[str, Any]) -> dict[str, Any]:
+        planner_contexts.append(json.loads(json.dumps(context)))
+        objective = str(context.get("objective") or "")
+        if objective == "phase91b root":
+            if root_calls["count"] == 0:
+                root_calls["count"] += 1
+                return {
+                    "type": "delegate_subcall",
+                    "objective": "phase91b child",
+                    "use_planner": True,
+                    "context": {"candidate_label": "tool_failure"},
+                }
+            root_calls["count"] += 1
+            return {"type": "finalize", "output": {"summary": "root done"}}
+        if objective == "phase91b child":
+            if child_calls["count"] == 0:
+                child_calls["count"] += 1
+                return {
+                    "type": "tool_call",
+                    "tool_name": "list_spans",
+                    "args": {"trace_id": "trace-9"},
+                }
+            child_calls["count"] += 1
+            return {
+                "type": "finalize",
+                "output": {
+                    "summary": "child done",
+                    "evidence_refs": [
+                        {
+                            "trace_id": "trace-9",
+                            "span_id": "root",
+                            "kind": "SPAN",
+                            "ref": "root",
+                        }
+                    ],
+                    "gaps": [],
+                },
+            }
+        raise AssertionError(f"Unexpected planner objective: {objective}")
+
+    result = loop.run(
+        actions=[],
+        planner=_planner,
+        budget=RuntimeBudget(max_iterations=10),
+        objective="phase91b root",
+    )
+
+    assert result.status == "completed"
+    assert result.output is not None
+    assert result.output.get("summary") == "root done"
+    assert root_calls["count"] == 2
+    assert child_calls["count"] == 2
+    assert result.subcall_metadata
+    assert bool(result.subcall_metadata[0].get("planner_driven")) is True
+    child_contexts = [
+        context
+        for context in planner_contexts
+        if str(context.get("objective") or "") == "phase91b child"
+    ]
+    assert child_contexts
+    assert all(int(context.get("depth") or -1) == 1 for context in child_contexts)
+    assert all(
+        isinstance(context.get("delegation_context"), dict)
+        and context["delegation_context"].get("candidate_label") == "tool_failure"
+        for context in child_contexts
+    )
+
+
+def test_recursive_loop_fails_when_delegate_subcall_requests_child_planner_without_parent_planner() -> None:
+    registry = ToolRegistry(inspection_api=_InspectionAPI())
+    guard = SandboxGuard(allowed_tools=registry.allowed_tools)
+    loop = RecursiveLoop(tool_registry=registry, sandbox_guard=guard)
+
+    result = loop.run(
+        actions=[
+            {
+                "type": "delegate_subcall",
+                "objective": "phase91b child",
+                "use_planner": True,
+            }
+        ],
+        budget=RuntimeBudget(max_iterations=5),
+    )
+
+    assert result.status == "failed"
+    assert result.error_code == "MODEL_OUTPUT_INVALID"
+    assert result.error_message is not None
+    assert "use_planner=true" in result.error_message
+
+
 def test_recursive_loop_applies_planner_usage_and_enforces_cost_budget() -> None:
     registry = ToolRegistry(inspection_api=_InspectionAPI())
     guard = SandboxGuard(allowed_tools=registry.allowed_tools)

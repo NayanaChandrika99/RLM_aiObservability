@@ -20,6 +20,10 @@ venv/
 datasets/**/exports/
 datasets/**/*.parquet
 
+# Runtime artifacts (keep curated proof outputs, ignore high-volume run dumps/checkpoints)
+artifacts/investigator_runs/
+artifacts/proof_runs/
+
 # Reference repos (kept as standalone git repos)
 phoenix/
 rlm/

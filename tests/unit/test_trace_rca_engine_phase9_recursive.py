@@ -71,9 +71,10 @@ class _FakeModelClient:
     def __init__(self, outputs: list[dict[str, Any]]) -> None:
         self._outputs = list(outputs)
         self.calls = 0
+        self.requests: list[Any] = []
 
     def generate_structured(self, request):  # noqa: ANN001, ANN201
-        del request
+        self.requests.append(request)
         if not self._outputs:
             raise AssertionError("No fake outputs configured.")
         self.calls += 1
@@ -85,6 +86,19 @@ class _FakeModelClient:
         )
 
 
+def _planner_context_from_request(request: Any) -> dict[str, Any]:
+    user_prompt = str(getattr(request, "user_prompt", ""))
+    prefix = "Runtime planner context JSON:\n"
+    suffix = "\n\nReturn only the next typed action object wrapped in the required schema."
+    if not user_prompt.startswith(prefix) or suffix not in user_prompt:
+        raise AssertionError("Planner request user_prompt format is unexpected.")
+    payload = user_prompt[len(prefix) : user_prompt.index(suffix)]
+    parsed = json.loads(payload)
+    if not isinstance(parsed, dict):
+        raise AssertionError("Planner context payload must be an object.")
+    return parsed
+
+
 def test_trace_rca_recursive_runtime_emits_trajectory_and_subcall_metadata(tmp_path: Path) -> None:
     model_client = _FakeModelClient(
         [
@@ -92,25 +106,27 @@ def test_trace_rca_recursive_runtime_emits_trajectory_and_subcall_metadata(tmp_p
                 "action": {
                     "type": "delegate_subcall",
                     "objective": "evaluate tool_failure hypothesis",
-                    "actions": [
-                        {
-                            "type": "synthesize",
-                            "output": {
-                                "evidence_refs": [
-                                    {
-                                        "trace_id": "trace-recursive",
-                                        "span_id": "root",
-                                        "kind": "SPAN",
-                                        "ref": "root",
-                                    }
-                                ],
-                                "gaps": [],
-                            },
-                        },
-                        {"type": "finalize", "output": {"summary": "tool failure candidate supported"}},
-                    ],
+                    "use_planner": True,
+                    "context": {"candidate_label": "tool_failure"},
                 }
             },
+            {
+                "action": {
+                    "type": "synthesize",
+                    "output": {
+                        "evidence_refs": [
+                            {
+                                "trace_id": "trace-recursive",
+                                "span_id": "root",
+                                "kind": "SPAN",
+                                "ref": "root",
+                            }
+                        ],
+                        "gaps": [],
+                    },
+                }
+            },
+            {"action": {"type": "finalize", "output": {"summary": "tool failure candidate supported"}}},
             {
                 "action": {
                     "type": "synthesize",
@@ -140,10 +156,18 @@ def test_trace_rca_recursive_runtime_emits_trajectory_and_subcall_metadata(tmp_p
     )
 
     assert report.primary_label == "tool_failure"
-    assert model_client.calls == 3
+    assert model_client.calls == 5
     assert run_record.runtime_ref.state_trajectory
     assert "delegating" in run_record.runtime_ref.state_trajectory
     assert run_record.runtime_ref.subcall_metadata
+    assert bool(run_record.runtime_ref.subcall_metadata[0].get("planner_driven")) is True
+    planner_context = _planner_context_from_request(model_client.requests[0])
+    delegation_policy = planner_context.get("delegation_policy")
+    assert isinstance(delegation_policy, dict)
+    assert bool(delegation_policy.get("prefer_planner_driven_subcalls")) is True
+    example_actions = delegation_policy.get("example_actions")
+    assert isinstance(example_actions, list) and example_actions
+    assert bool(example_actions[0].get("use_planner")) is True
     assert run_record.runtime_ref.usage.tokens_in > 0
     assert run_record.runtime_ref.usage.cost_usd > 0.0
 
