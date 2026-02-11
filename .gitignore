@@ -1,0 +1,14 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.uv-cache/
+.phoenix_data/
+artifacts/investigator_runs/
+artifacts/proof_runs/**/checkpoint.json

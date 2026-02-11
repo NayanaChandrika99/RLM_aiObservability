@@ -1,0 +1,267 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["action"],
+  "properties": {
+    "action": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["tool_call", "delegate_subcall", "synthesize", "finalize"]
+        },
+        "tool_name": {"type": "string"},
+        "args": {
+          "type": "object",
+          "properties": {
+            "trace_id": {"type": "string"},
+            "type": {"type": "string"},
+            "project_name": {"type": "string"},
+            "start_time": {"type": "string"},
+            "end_time": {"type": "string"},
+            "filter_expr": {"type": "string"},
+            "span_id": {"type": "string"},
+            "controls_version": {"type": "string"},
+            "app_type": {"type": "string"},
+            "tools_used": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "data_domains": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "control_id": {"type": "string"},
+            "snapshot_id": {"type": "string"},
+            "base_snapshot_id": {"type": "string"},
+            "target_snapshot_id": {"type": "string"},
+            "pattern": {"type": "string"},
+            "fields": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "text_or_chunks": {
+              "type": ["string", "array"],
+              "items": {"type": "string"}
+            },
+            "tag": {"type": "string"}
+          },
+          "additionalProperties": false
+        },
+        "objective": {"type": "string"},
+        "use_planner": {"type": "boolean"},
+        "context": {
+          "type": "object",
+          "properties": {
+            "trace_id": {"type": "string"},
+            "candidate_label": {"type": "string"},
+            "focus": {"type": "string"},
+            "control_id": {"type": "string"},
+            "required_evidence": {
+              "type": "array",
+              "items": {"type": "string"}
+            }
+          },
+          "additionalProperties": false
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["tool_call", "delegate_subcall", "synthesize", "finalize"]
+              },
+              "tool_name": {"type": "string"},
+              "args": {
+                "type": "object",
+                "properties": {
+                  "trace_id": {"type": "string"},
+                  "type": {"type": "string"},
+                  "project_name": {"type": "string"},
+                  "start_time": {"type": "string"},
+                  "end_time": {"type": "string"},
+                  "filter_expr": {"type": "string"},
+                  "span_id": {"type": "string"},
+                  "controls_version": {"type": "string"},
+                  "app_type": {"type": "string"},
+                  "tools_used": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                  },
+                  "data_domains": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                  },
+                  "control_id": {"type": "string"},
+                  "snapshot_id": {"type": "string"},
+                  "base_snapshot_id": {"type": "string"},
+                  "target_snapshot_id": {"type": "string"},
+                  "pattern": {"type": "string"},
+                  "fields": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                  },
+                  "text_or_chunks": {
+                    "type": ["string", "array"],
+                    "items": {"type": "string"}
+                  },
+                  "tag": {"type": "string"}
+                },
+                "additionalProperties": false
+              },
+              "objective": {"type": "string"},
+              "use_planner": {"type": "boolean"},
+              "context": {
+                "type": "object",
+                "properties": {
+                  "trace_id": {"type": "string"},
+                  "candidate_label": {"type": "string"},
+                  "focus": {"type": "string"},
+                  "control_id": {"type": "string"},
+                  "required_evidence": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                  }
+                },
+                "additionalProperties": false
+              },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["type"],
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": ["tool_call", "delegate_subcall", "synthesize", "finalize"]
+                    },
+                    "tool_name": {"type": "string"},
+                    "objective": {"type": "string"},
+                    "use_planner": {"type": "boolean"},
+                    "fatal": {"type": "boolean"}
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "output": {
+                "type": "object",
+                "properties": {
+                  "summary": {"type": "string"},
+                  "primary_label": {"type": "string"},
+                  "pass_fail": {"type": "string"},
+                  "remediation": {
+                    "type": ["string", "array"],
+                    "items": {"type": "string"}
+                  },
+                  "confidence": {"type": "number"},
+                  "incident_summary": {"type": "string"},
+                  "gaps": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                  }
+                },
+                "additionalProperties": false
+              },
+              "fatal": {"type": "boolean"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "summary": {"type": "string"},
+            "primary_label": {"type": "string"},
+            "pass_fail": {"type": "string"},
+            "remediation": {
+              "type": ["string", "array"],
+              "items": {"type": "string"}
+            },
+            "confidence": {"type": "number"},
+            "incident_summary": {"type": "string"},
+            "rationale": {"type": "string"},
+            "covered_requirements": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "missing_evidence": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "gaps": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "trace_id": {"type": ["string", "null"]},
+                  "span_id": {"type": ["string", "null"]},
+                  "kind": {"type": ["string", "null"]},
+                  "ref": {"type": ["string", "null"]},
+                  "excerpt_hash": {"type": ["string", "null"]},
+                  "ts": {"type": ["string", "null"]},
+                  "artifact_id": {"type": ["string", "null"]},
+                  "document_id": {"type": ["string", "null"]},
+                  "chunk_id": {"type": ["string", "null"]}
+                },
+                "additionalProperties": false
+              }
+            },
+            "hypotheses": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "statement": {"type": "string"},
+                  "confidence": {"type": "number"},
+                  "evidence_refs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "trace_id": {"type": ["string", "null"]},
+                        "span_id": {"type": ["string", "null"]},
+                        "kind": {"type": ["string", "null"]},
+                        "ref": {"type": ["string", "null"]},
+                        "excerpt_hash": {"type": ["string", "null"]},
+                        "ts": {"type": ["string", "null"]},
+                        "artifact_id": {"type": ["string", "null"]},
+                        "document_id": {"type": ["string", "null"]},
+                        "chunk_id": {"type": ["string", "null"]}
+                      },
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "recommended_actions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "priority": {"type": "string"},
+                  "type": {"type": "string"},
+                  "action": {"type": "string"}
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "fatal": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
