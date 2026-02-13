@@ -213,6 +213,117 @@ def test_single_pass_mode_falls_back_on_error() -> None:
     assert "Timeout Issues" in categories
 
 
+# ---------------------------------------------------------------------------
+# Experiment runner tests
+# ---------------------------------------------------------------------------
+
+from arcgentica.trail_experiment import (
+    load_subset_trace_ids,
+    ExperimentConfig,
+    run_experiment,
+)
+
+
+def test_load_subset_trace_ids_dev18() -> None:
+    ids = load_subset_trace_ids("dev18")
+    assert isinstance(ids, list)
+    assert len(ids) == 18
+    assert all(isinstance(tid, str) for tid in ids)
+
+
+def test_load_subset_trace_ids_full_returns_none() -> None:
+    ids = load_subset_trace_ids("full")
+    assert ids is None
+
+
+def test_experiment_config_defaults() -> None:
+    cfg = ExperimentConfig(
+        experiment_id="test_001",
+        trail_data_dir=Path("/tmp/data"),
+        gold_dir=Path("/tmp/gold"),
+        output_dir=Path("/tmp/out"),
+    )
+    assert cfg.model == "openai/gpt-5-mini"
+    assert cfg.approach == "single_pass"
+    assert cfg.subset == "dev18"
+    assert cfg.prompt_version == "v2"
+    assert cfg.split == "GAIA"
+    assert cfg.max_workers == 5
+
+
+def test_run_experiment_writes_outputs_and_metrics(tmp_path: Path) -> None:
+    """Run experiment with mocked LLM on 2 synthetic traces."""
+    data_dir = tmp_path / "data" / "GAIA"
+    data_dir.mkdir(parents=True)
+    gold_dir = tmp_path / "gold"
+    gold_dir.mkdir(parents=True)
+
+    trace1 = {
+        "trace_id": "aaaa1111bbbb2222cccc3333dddd4444",
+        "spans": [{"span_id": "sp1", "span_name": "main", "status_code": "Unset",
+                    "status_message": "", "span_attributes": {}, "logs": [],
+                    "child_spans": []}],
+    }
+    trace2 = {
+        "trace_id": "eeee5555ffff6666aaaa7777bbbb8888",
+        "spans": [{"span_id": "sp2", "span_name": "main", "status_code": "Error",
+                    "status_message": "timed out", "span_attributes": {}, "logs": [],
+                    "child_spans": []}],
+    }
+    (data_dir / "aaaa1111bbbb2222cccc3333dddd4444.json").write_text(json.dumps(trace1))
+    (data_dir / "eeee5555ffff6666aaaa7777bbbb8888.json").write_text(json.dumps(trace2))
+
+    gold1 = {"errors": [], "scores": [{"reliability_score": 5, "reliability_reasoning": "ok",
+             "security_score": 5, "security_reasoning": "ok",
+             "instruction_adherence_score": 5, "instruction_adherence_reasoning": "ok",
+             "plan_opt_score": 5, "plan_opt_reasoning": "ok", "overall": 5.0}]}
+    gold2 = {"errors": [{"category": "Timeout Issues", "location": "sp2",
+             "evidence": "timed out", "description": "timeout", "impact": "HIGH"}],
+             "scores": [{"reliability_score": 2, "reliability_reasoning": "bad",
+             "security_score": 5, "security_reasoning": "ok",
+             "instruction_adherence_score": 3, "instruction_adherence_reasoning": "ok",
+             "plan_opt_score": 2, "plan_opt_reasoning": "bad", "overall": 3.0}]}
+    (gold_dir / "aaaa1111bbbb2222cccc3333dddd4444.json").write_text(json.dumps(gold1))
+    (gold_dir / "eeee5555ffff6666aaaa7777bbbb8888.json").write_text(json.dumps(gold2))
+
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock(message={"content": json.dumps({
+        "errors": [], "scores": [{"reliability_score": 5, "reliability_reasoning": "ok",
+        "security_score": 5, "security_reasoning": "ok",
+        "instruction_adherence_score": 5, "instruction_adherence_reasoning": "ok",
+        "plan_opt_score": 5, "plan_opt_reasoning": "ok", "overall": 5.0}]
+    })})]
+
+    cfg = ExperimentConfig(
+        experiment_id="test_run",
+        trail_data_dir=tmp_path / "data",
+        gold_dir=gold_dir,
+        output_dir=tmp_path / "out",
+        model="openai/gpt-5-mini",
+        subset="full",
+        split="GAIA",
+    )
+
+    with patch("arcgentica.trail_agent.completion", return_value=mock_response):
+        result = run_experiment(cfg)
+
+    assert result["experiment_id"] == "test_run"
+    assert "metrics" in result
+    assert "weighted_f1" in result["metrics"]
+    assert result["traces_processed"] == 2
+
+    output_dir = tmp_path / "out" / "test_run"
+    assert output_dir.exists()
+    assert (output_dir / "config.json").exists()
+    assert (output_dir / "metrics.json").exists()
+
+    metrics = json.loads((output_dir / "metrics.json").read_text())
+    assert "weighted_f1" in metrics
+
+    log_path = tmp_path / "out" / "experiment_log.json"
+    assert log_path.exists()
+
+
 def test_single_pass_validates_locations() -> None:
     mock_response = MagicMock()
     mock_response.choices = [
