@@ -61,8 +61,8 @@ Phase 1 canonical loop (no Docker)
 OpenAI usage (Phase 1-4)
 - Allowed: OpenAI API.
 - Defaults:
-  - primary model: `gpt-5-mini`
-  - optional override for deeper synthesis: `gpt-5.2`
+  - primary model: `gpt-4o-mini` (all calls — root and sub-calls)
+  - optional upgrade for root synthesis: `gpt-4o` or `gpt-5.2`
 - Budget discipline:
   - default iteration cap: ~$5/day while harness is unstable; increase only after eval loop is reliable.
 

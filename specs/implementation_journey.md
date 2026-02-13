@@ -81,8 +81,8 @@ When any lower-level doc conflicts with a higher-level doc, update the lower-lev
 - `uv`-first command surface.
 - Phoenix runs locally via `phoenix serve` (no Docker requirement).
 - OpenAI models for evaluator synthesis:
-  - default `gpt-5-mini`
-  - optional override `gpt-5.2`
+  - default `gpt-4o-mini` (all calls — root and sub-calls)
+  - optional upgrade for root synthesis: `gpt-4o` or `gpt-5.2`
 - Trace exports are Parquet-first.
 - Ground truth labels stay in external manifests, not production-like trace metadata.
 
@@ -121,6 +121,20 @@ Harden runtime:
 - recursion/budget tests
 - adversarial/tool-output safety checks
 - reproducibility checks
+
+### Phase 10 — RLM-RCA System
+
+Execution path: `execplan/phase10/`
+
+Design decisions locked:
+- Custom REPL harness (not DSPy), REPL-primary execution mode
+- Local subprocess sandbox with import blocklist
+- CLI trigger (`python -m investigator.rca.cli`)
+- `gpt-4o-mini` for all calls (upgrade root model later)
+- Per-hypothesis recursive decomposition
+
+Architecture doc: `execplan/phase10/RLM_RCA_ARCHITECTURE.md`
+Implementation plan: `execplan/phase10/RLM_RCA_IMPLEMENTATION_PLAN.md`
 
 ## Definition of “Done” for Any Implementation Slice
 

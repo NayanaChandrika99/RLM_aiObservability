@@ -293,7 +293,7 @@ Minimum object shape:
   },
   "model": {
     "provider": "openai",
-    "name": "gpt-5-mini|gpt-5.2",
+    "name": "gpt-4o-mini|gpt-4o|gpt-5.2",
     "temperature": "number",
     "prompt_template_hash": "string",
     "evaluator_version": "string"

@@ -131,32 +131,43 @@ Given a trace, identify the most likely failure class, provide evidence-linked e
 
 `RCAReport` (see `specs/formal_contracts.md`).
 
-### Core Algorithm
+### Core Algorithm (REPL-Primary)
 
-1. Build candidate span set:
-   - status `ERROR`
-   - exception events
-   - highest latency spans
-2. Recursively inspect only suspicious branches:
-   - parent/child relationships
-   - tool inputs/outputs
-   - retrieval chunks
-3. Build hypothesis candidates using taxonomy:
-   - retrieval_failure
-   - tool_failure
-   - instruction_failure
-   - upstream_dependency_failure
-   - data_schema_mismatch
-4. Select primary label and confidence.
-5. Produce evidence-linked remediation.
+The RCA engine uses a REPL-primary execution model. Deterministic narrowing is a
+pre-filter step inside the REPL, not a separate mode.
+
+1. **Deterministic pre-filter** (no LLM calls):
+   - Build candidate hot-span set: `status_code == ERROR`, exception events, highest latency
+   - Stable sort: error → exception → latency desc → span_id asc
+   - Select top-K hot spans (default K=5)
+   - Collect branch context per hot span (BFS, depth≤2, nodes≤30)
+2. **REPL loop starts** (model receives hot-span summary + tool access + analysis sandbox):
+   - Model writes Python code to analyze hot spans, call tools, find patterns
+   - Model identifies 1–4 candidate failure hypotheses from taxonomy:
+     - retrieval_failure
+     - tool_failure
+     - instruction_failure
+     - upstream_dependency_failure
+     - data_schema_mismatch
+3. **Per-hypothesis sub-calls** (one sub-call per hypothesis):
+   - Each sub-call gets filtered span slice + hypothesis statement
+   - Each sub-call explores evidence via tools + analysis code
+   - Each sub-call returns: `{label, confidence, evidence_refs, gaps}`
+4. **Root synthesis** (model compares sub-call results):
+   - Pick primary label (highest evidence support)
+   - Record rejected hypotheses + reasoning
+   - Compute final confidence (evidence bonus rules)
+5. Produce evidence-linked RCAReport with remediation and gaps.
 
 ### Recursion Strategy
 
-- Branch-local recursion over span subtrees.
+- **Per-hypothesis decomposition**: root identifies candidate failure modes, spawns one
+  sub-call per hypothesis with a focused objective and filtered span slice.
+- Budget is **shared globally** across root + all sub-calls (not independent budgets).
 - Stop when:
-  - additional calls do not increase evidence quality
-  - budget threshold reached
-  - evidence coverage passes threshold
+  - all hypothesis sub-calls complete
+  - budget threshold reached (terminate with best-effort synthesis)
+  - evidence coverage passes confidence threshold
 
 ### Evidence Policy
 

@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Slide 2 - The Long-Context Problem</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #333;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .slide {
+            width: 1280px;
+            height: 720px;
+            background-color: #FBF7F0;
+            /* Warm paper */
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+            display: flex;
+        }
+
+        /* Ledger lines background */
+        .slide::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image: linear-gradient(#1B2A3A 1px, transparent 1px);
+            background-size: 100% 40px;
+            opacity: 0.05;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* Header */
+        .header {
+            position: absolute;
+            top: 48px;
+            left: 48px;
+            right: 48px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 2;
+        }
+
+        h2 {
+            font-size: 32px;
+            font-weight: 600;
+            color: #0B1F33;
+            margin: 0;
+        }
+
+        /* Left Content (Bullets) */
+        .left-content {
+            width: 55%;
+            padding: 140px 48px 48px 48px;
+            /* Adjusted top padding for header */
+            box-sizing: border-box;
+            z-index: 1;
+        }
+
+        ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        li {
+            font-size: 24px;
+            line-height: 1.5;
+            color: #0B1F33;
+            margin-bottom: 24px;
+            position: relative;
+            padding-left: 24px;
+        }
+
+        li::before {
+            content: "•";
+            position: absolute;
+            left: 0;
+            color: #C62828;
+            /* Accent color */
+        }
+
+        li ul {
+            margin-top: 12px;
+            margin-left: 12px;
+        }
+
+        li li {
+            font-size: 20px;
+            color: #54657A;
+            margin-bottom: 8px;
+        }
+
+        .pill-callout {
+            background-color: #FFE0E0;
+            color: #C62828;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: 600;
+            vertical-align: middle;
+            margin-left: 8px;
+        }
+
+        /* Right Content (Evidence Ledger) */
+        .right-content {
+            width: 45%;
+            padding: 140px 48px 48px 0;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            z-index: 1;
+        }
+
+        .ledger-card {
+            background: #fff;
+            border: 1px solid rgba(27, 42, 58, 0.2);
+            border-radius: 12px;
+            box-shadow: 4px 4px 12px rgba(0, 0, 0, 0.05);
+            width: 100%;
+            height: 400px;
+            padding: 24px;
+            box-sizing: border-box;
+            position: relative;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            overflow: hidden;
+        }
+
+        .ledger-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(27, 42, 58, 0.05);
+            color: #54657A;
+        }
+
+        .ledger-header {
+            font-weight: 600;
+            color: #0B1F33;
+            border-bottom: 2px solid rgba(27, 42, 58, 0.1);
+            margin-bottom: 8px;
+        }
+
+        .highlight-row {
+            background-color: #FFF8E1;
+            /* Highlight */
+            color: #0B1F33;
+            font-weight: 500;
+            position: relative;
+        }
+
+        /* Red bracket for highlighting */
+        .bracket {
+            position: absolute;
+            right: 0;
+            top: 140px;
+            /* Rough vertical center of card */
+            bottom: unset;
+            height: 40px;
+            width: 8px;
+            border-top: 2px solid #C62828;
+            border-bottom: 2px solid #C62828;
+            border-right: 2px solid #C62828;
+            border-left: none;
+        }
+
+        .bracket-label {
+            position: absolute;
+            right: -140px;
+            /* Push out */
+            top: 150px;
+            background-color: #C62828;
+            color: #fff;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            z-index: 3;
+            box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        /* Context stuffing inset */
+        .inset-container {
+            display: flex;
+            gap: 16px;
+            margin-top: 24px;
+            width: 100%;
+        }
+
+        .sub-card {
+            flex: 1;
+            background: #fff;
+            border: 1px solid rgba(27, 42, 58, 0.2);
+            border-radius: 8px;
+            padding: 12px;
+            height: 80px;
+            font-size: 12px;
+            color: #54657A;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .card-title {
+            font-weight: 600;
+            color: #0B1F33;
+            margin-bottom: 4px;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .warning-icon {
+            color: #FBC02D;
+            font-size: 16px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="slide">
+        <div class="header">
+            <h2>AI Observability: The Long-Context Problem</h2>
+        </div>
+
+        <div class="left-content">
+            <ul>
+                <li>Evidence is distributed, not single-log:
+                    <ul>
+                        <li>Trace trees (parent/child)</li>
+                        <li>Tool I/O artifacts & errors</li>
+                        <li>Retrieval chunks & citations</li>
+                    </ul>
+                </li>
+                <li>"Long context" fails in practice:
+                    <ul>
+                        <li>Important clues are buried <span class="pill-callout">"lost in the middle"</span></li>
+                        <li>Stuffing context = high cost + confusion</li>
+                        <li>Manual triage does not scale at volume</li>
+                    </ul>
+                </li>
+            </ul>
+        </div>
+
+        <div class="right-content">
+            <!-- Evidence Ledger Card -->
+            <div class="ledger-card">
+                <div class="ledger-row ledger-header">
+                    <span style="width: 40%">Signal</span>
+                    <span style="width: 30%">Volume</span>
+                    <span style="width: 30%">Risk</span>
+                </div>
+                <div class="ledger-row">
+                    <span style="width: 40%">trace_spans</span>
+                    <span style="width: 30%">14k tokens</span>
+                    <span style="width: 30%">noise</span>
+                </div>
+                <div class="ledger-row">
+                    <span style="width: 40%">tool_io_blobs</span>
+                    <span style="width: 30%">8k tokens</span>
+                    <span style="width: 30%">high</span>
+                </div>
+                <div class="ledger-row highlight-row">
+                    <span style="width: 40%">retrieval_chunks</span>
+                    <span style="width: 30%">35 chunks</span>
+                    <span style="width: 30%">CRITICAL</span>
+                </div>
+                <div class="ledger-row">
+                    <span style="width: 40%">config_diffs</span>
+                    <span style="width: 30%">2 files</span>
+                    <span style="width: 30%">medium</span>
+                </div>
+                <div class="ledger-row">
+                    <span style="width: 40%">policy_controls</span>
+                    <span style="width: 30%">12 rules</span>
+                    <span style="width: 30%">low</span>
+                </div>
+                <div class="ledger-row">
+                    <span style="width: 40%">upstream_deps</span>
+                    <span style="width: 30%">5 services</span>
+                    <span style="width: 30%">medium</span>
+                </div>
+
+                <!-- Overlay Highlight Bracket -->
+                <div class="bracket" style="top: 105px;"></div>
+                <div class="bracket-label" style="top: 110px; right: -120px; left: unset;">lost in the middle</div>
+
+            </div>
+
+            <div class="inset-container">
+                <div class="sub-card">
+                    <div class="card-title">One-shot prompt</div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span class="warning-icon">⚠</span>
+                        <span>tokens ↑ fidelity ↓</span>
+                    </div>
+                </div>
+                <div class="sub-card">
+                    <div class="card-title">Bounded investigation</div>
+                    <div style="font-family: 'JetBrains Mono'; font-size: 10px;">
+                        plan -> inspect -> submit
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</body>
+
+</html>

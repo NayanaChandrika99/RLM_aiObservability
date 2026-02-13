@@ -298,9 +298,9 @@ Deterministic narrowing (hot spans) should be reproducible:
 - define stable tie-breakers (latency desc, then span_id asc)
 
 RLM runtime settings (Phases 2-4):
-- default model: `gpt-5-mini`
-- allow override: `gpt-5.2` for difficult synthesis
-- run at low temperature; enforce JSON schema output; record prompt/template hash
+- default model: `gpt-4o-mini` (all calls — root and sub-calls)
+- optional upgrade for root synthesis: `gpt-4o` or `gpt-5.2`
+- run at temperature 0.0; enforce JSON schema output; record prompt/template hash
 
 ## Phase 3: Policy-to-Trace Compliance Auditor Design (V1)
 

@@ -27,24 +27,45 @@ Out of scope:
 
 - `rlm/2512.24601v2.pdf`
 - `https://kmad.ai/Recursive-Language-Models-Security-Audit`
+- `https://www.primeintellect.ai/blog/rlm`
+- `https://www.dbreunig.com/2026/02/09/the-potential-of-rlms.html`
 - `API.md`
 - `DESIGN.md`
 - `specs/formal_contracts.md`
 - `specs/rlm_engines.md`
+- `execplan/phase10/RLM_RCA_ARCHITECTURE.md`
 
 ## Runtime Model
 
-The runtime is a scaffold around a base model and must execute as:
+The runtime is a **REPL-primary** scaffold around a base model. The REPL (Read-Eval-Print Loop)
+is the default and primary execution mode for all engines. Deterministic logic (hot-span narrowing,
+pattern matching) runs as a pre-filter step **inside** the REPL context, not as a separate mode.
+
+Execution sequence:
 
 1. Initialize runtime state with input payload and metadata only.
-2. Provide bounded read-only tools to the model.
-3. Run iterative reasoning turns.
-4. Allow recursive sub-calls under explicit depth and quota limits.
-5. Build final output as a structured artifact variable.
-6. Validate schema.
-7. Persist run artifact and write Phoenix annotations.
+2. Run deterministic pre-filter (hot-span narrowing, error/exception/latency sorting) and package
+   results as the REPL's initial context.
+3. Start the REPL loop: provide the model with persistent execution state, bounded read-only tools,
+   and a Python analysis sandbox.
+4. The model iteratively writes code to explore, calls tools, and accumulates evidence.
+5. Allow recursive sub-calls under explicit depth and quota limits (per-hypothesis decomposition
+   for RCA; per-control for compliance; per-trace for incident).
+6. Build final output as a structured artifact variable (via SUBMIT action).
+7. Validate output against engine-specific schema.
+8. Persist run artifact and write Phoenix annotations.
 
-The runtime must treat trace/context/policy content as external environment data, not as one monolithic prompt blob.
+The runtime must treat trace/context/policy content as external environment data, not as one
+monolithic prompt blob. Large context lives as program state outside the model's token window;
+the model selectively pulls slices into tokens via code and tool calls.
+
+### Model Configuration
+
+- Default model for all calls (root and sub-calls): `gpt-4o-mini`
+- Optional upgrade for root synthesis: `gpt-4o` or `gpt-5.2`
+- Temperature: `0.0` (maximize determinism)
+- Output format: JSON schema mode (structured generation)
+- Reasoning effort: `minimal` for gpt-5 family models
 
 ## Runtime State
 
@@ -101,25 +122,59 @@ Invalid transitions must hard-fail the run.
 
 ## Sandbox Contract
 
-Required restrictions:
+### Execution Model
+
+Model-generated code runs in a **local subprocess** with restricted imports. The subprocess
+is the security boundary between the RLM's generated code and the host system.
+
+- The REPL harness spawns a Python subprocess per execution turn.
+- The subprocess has a custom import hook that blocks dangerous modules.
+- Tool calls from generated code are proxied through the parent process via `ToolRegistry`.
+- REPL output (stdout/stderr) is captured and **truncated to 8192 characters per turn**.
+- Each code execution turn has a **30-second timeout**. Runaway code is killed.
+
+### Import Blocklist
+
+The following modules are **blocked** in the subprocess (attempting to import raises `ImportError`):
+
+```
+os, subprocess, socket, http, urllib, pathlib, shutil, signal,
+ctypes, importlib, sys, multiprocessing, threading
+```
+
+### Allowed Analysis Modules
+
+The following modules are **allowed** for data analysis inside the REPL:
+
+```
+json, re, math, statistics, collections, itertools, functools,
+operator, datetime, dataclasses, typing, copy, textwrap, hashlib
+```
+
+### Required Restrictions
 
 - No network access from runtime code execution.
 - No filesystem read/write from runtime code execution.
-- No subprocess execution.
-- No dynamic imports outside allowlisted runtime modules.
+- No spawning child processes from generated code (the subprocess itself is the sandbox;
+  code within it cannot escape to spawn further processes).
+- No imports outside the allowed analysis modules.
 - No mutable side-effect tools.
 
-Allowed behavior:
+### Allowed Behavior
 
-- Call allowlisted read-only tool functions from `API.md`.
+- Call allowlisted read-only tool functions from `API.md` (routed through `ToolRegistry`).
+- Write Python code to filter, aggregate, group, and transform tool results.
 - Store intermediate variables in runtime memory.
-- Emit bounded logs and bounded explanations.
+- Emit bounded logs and bounded explanations (truncated per turn).
+
+### Violation Handling
 
 If a sandbox violation occurs:
 
 - Set status to `failed`.
 - Emit standardized error code `SANDBOX_VIOLATION`.
 - Persist run artifact with violation details.
+- No partial output emitted for sandbox violations.
 
 ## Tool Contract
 
@@ -152,23 +207,54 @@ Rules:
 
 The runtime must support recursive sub-calls with explicit limits.
 
-Required limits:
+### Budget Defaults
 
-- `max_depth`: default 2
-- `max_iterations`: default 40
-- `max_tool_calls`: default 200
-- `max_subcalls`: default 80
-- `max_tokens_total`: default 300000
-- `max_cost_usd`: optional hard cap
-- `max_wall_time_sec`: default 180
+These are **contract-level upper bounds**. Engines may set tighter per-engine defaults
+(see `specs/rlm_engines.md`), but must not exceed contract limits.
+
+| Knob | Contract max | RCA default | Compliance default | Incident default |
+|------|-------------|-------------|-------------------|-----------------|
+| `max_depth` | 3 | 2 | 2 | 3 |
+| `max_iterations` | 60 | 40 | 40 | 60 |
+| `max_tool_calls` | 220 | 120 | 160 | 220 |
+| `max_subcalls` | 90 | 40 | 60 | 90 |
+| `max_tokens_total` | 320000 | 200000 | 260000 | 320000 |
+| `max_cost_usd` | optional | optional | optional | optional |
+| `max_wall_time_sec` | 300 | 180 | 180 | 300 |
+
+Override policy:
+- CLI invocations may override any knob via flags.
+- Overrides must not exceed contract-level maximums.
+- All active budget values (including overrides) must be recorded in the RunRecord.
+
+### Recursion Strategy
+
+The default recursion strategy is **per-hypothesis decomposition** (for RCA):
+
+1. Root REPL identifies 1–4 candidate failure hypotheses from hot-span analysis.
+2. Root spawns one `delegate_subcall` per hypothesis, each with:
+   - a focused objective (the hypothesis statement)
+   - a filtered context (only relevant span IDs and their branches)
+   - shared global budget counters
+3. Each sub-call explores evidence independently via tools + analysis code.
+4. Each sub-call returns: `{label, confidence, evidence_refs, gaps}`.
+5. Root synthesizes sub-call results into the final output.
+
+Other engines use different decomposition strategies (per-control for compliance,
+per-trace for incident) but the budget and depth mechanics are identical.
+
+### Budget Enforcement
 
 If any limit is reached:
 
 - runtime enters `terminated_budget`
-- engine attempts best-effort finalization
+- engine attempts best-effort finalization with evidence gathered so far
 - final status must be `partial` or `failed`
+- at 90% of `max_wall_time_sec`, the REPL forces finalization
 
-Required recursion metadata per sub-call:
+### Required Recursion Metadata
+
+Per sub-call:
 
 ```json
 {
@@ -300,12 +386,48 @@ Each run must collect:
 
 Must pass before runtime is considered compliant:
 
-1. Sandbox test: filesystem/network calls are blocked.
-2. Budget test: forced recursion overflow yields `partial` or `failed`, never hang.
-3. Determinism test: two runs on same dataset/config produce equivalent structured output.
-4. Validation test: malformed model output fails schema gate.
-5. Audit test: run artifact includes required fields and tool/sub-call summary.
+1. Sandbox test: filesystem/network calls are blocked (import blocklist enforced).
+2. Sandbox test: blocked modules (`os`, `subprocess`, `socket`, etc.) raise `ImportError`.
+3. Sandbox test: REPL output truncated at 8192 chars per turn.
+4. Sandbox test: per-turn timeout kills runaway code after 30s.
+5. Budget test: forced recursion overflow yields `partial` or `failed`, never hang.
+6. Budget test: 90% wall-time triggers forced finalization.
+7. Determinism test: two runs on same dataset/config produce equivalent structured output.
+8. Validation test: malformed model output fails schema gate.
+9. Audit test: run artifact includes required fields and tool/sub-call summary.
+10. REPL test: tool calls routed through ToolRegistry (not direct API access).
+
+## REPL Execution Model
+
+The REPL is the primary execution environment for all engines. It is a custom-built Python
+loop (not DSPy) that gives the model a persistent execution state, tool access, and data
+analysis capabilities.
+
+### What the Model Can Do Per REPL Turn
+
+1. **Write Python analysis code**: filter dataframes, compute statistics, group spans by
+   attribute, find patterns, format evidence summaries. Executed in the subprocess sandbox.
+2. **Call Inspection API tools**: routed through `ToolRegistry` which enforces the allowlist
+   and logs argument/response hashes.
+3. **Spawn recursive sub-calls**: `delegate_subcall(objective="...", context={...})` creates
+   an isolated sub-instance at `depth+1`.
+4. **Update working state**: store intermediate findings, accumulate evidence pointers.
+5. **SUBMIT**: end the loop and return the final structured output.
+
+### REPL State (Persistent Across Turns)
+
+- `variables`: dict of named values (tool results, filtered slices, intermediate computations)
+- `evidence_refs`: accumulated evidence pointers
+- `hypothesis_candidates`: list of candidate hypotheses (for per-hypothesis recursion)
+- `tool_trace`: call log with argument hashes and response hashes
+- `budget_counters`: global counters shared across root + sub-calls
+
+### Fallback Behavior
+
+- If the REPL fails or budget is exhausted before SUBMIT, the engine falls back to a
+  deterministic report using the pre-filter results and any evidence gathered so far.
+- The fallback report has `annotator_kind=CODE` (not `LLM`).
 
 ## Keywords
 
-rlm runtime, recursive loop, sandbox, tool contract, recursion budget, run record, deterministic evaluation, evidence audit
+rlm runtime, repl-primary, recursive loop, subprocess sandbox, import blocklist, tool contract, recursion budget, per-hypothesis, run record, deterministic evaluation, evidence audit

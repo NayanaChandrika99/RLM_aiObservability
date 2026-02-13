@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Slide 1 - AI Observability Investigation Layer</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #333;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .slide {
+            width: 1280px;
+            height: 720px;
+            background-color: #FBF7F0; /* Warm paper */
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            display: flex;
+        }
+
+        /* Ledger lines pattern */
+        .slide::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image: linear-gradient(#1B2A3A 1px, transparent 1px);
+            background-size: 100% 40px;
+            opacity: 0.05;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* Left Content Area (60%) */
+        .left-content {
+            width: 60%;
+            padding: 80px 48px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            position: relative;
+            z-index: 1;
+        }
+
+        .accent-line {
+            position: absolute;
+            left: 48px;
+            top: 86px; /* Align with title top */
+            bottom: 86px; /* Align with content bottom roughly */
+            width: 8px;
+            background-color: #C62828; /* Signal red */
+            height: 380px; 
+        }
+        
+        .text-block {
+            padding-left: 32px; /* Space for accent line */
+        }
+
+        h1 {
+            font-size: 64px;
+            line-height: 1.1;
+            color: #0B1F33; /* Deep ink navy */
+            margin: 0 0 24px 0;
+            font-weight: 700;
+            letter-spacing: -1px;
+        }
+
+        h2 {
+            font-size: 32px;
+            line-height: 1.4;
+            color: #54657A; /* Slate */
+            margin: 0 0 48px 0;
+            font-weight: 400;
+        }
+
+        /* Micro-diagram */
+        .micro-diagram {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .chip {
+            background-color: #fff;
+            border: 1px solid #1B2A3A;
+            border-radius: 6px;
+            padding: 8px 16px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            color: #0B1F33;
+            box-shadow: 2px 2px 0 rgba(0,0,0,0.05);
+            position: relative;
+            z-index: 2;
+        }
+
+        .micro-diagram-line {
+            height: 1px;
+            flex-grow: 0;
+            width: 20px;
+            background-color: #1B2A3A;
+            opacity: 0.2;
+        }
+
+        /* Right Content Area (40%) */
+        .right-content {
+            width: 40%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            z-index: 1;
+        }
+
+        .minimap-container {
+            width: 320px;
+            height: 480px;
+            border-radius: 24px; /* Rounded rectangle */
+            border: 1px solid rgba(27, 42, 58, 0.1);
+            position: relative;
+            overflow: hidden;
+            background-color: rgba(255, 255, 255, 0.4);
+        }
+
+        /* Abstract node graph watermark */
+        .node {
+            position: absolute;
+            background-color: #1B2A3A;
+            border-radius: 50%;
+            opacity: 0.1;
+        }
+
+        .link {
+            position: absolute;
+            background-color: #1B2A3A;
+            height: 1px;
+            opacity: 0.1;
+            transform-origin: 0 50%;
+        }
+
+        /* Footer */
+        .footer {
+            position: absolute;
+            bottom: 48px;
+            right: 48px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            z-index: 1;
+        }
+
+        .slide-number {
+            font-family: 'Inter', sans-serif;
+            font-size: 16px;
+            color: #54657A;
+        }
+
+        .tag-evidence {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: #1B2A3A;
+            opacity: 0.5;
+            border: 1px solid #1B2A3A;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+
+        /* Brand */
+        .brand {
+            position: absolute;
+            top: 48px;
+            right: 48px; /* Or left based on preference, instruction said top-left if safe */
+            font-family: 'Inter', sans-serif;
+            font-weight: 600;
+            font-size: 14px;
+            color: #54657A;
+            opacity: 0.5;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="slide">
+        <!-- Brand (Optional) -->
+        <!-- <div class="brand">PepsiCo Confidential (Internal)</div> -->
+
+        <div class="left-content">
+            <div class="accent-line"></div>
+            <div class="text-block">
+                <h1>AI Observability<br>Investigation Layer<br><span style="font-weight: 400; opacity: 0.8; font-size: 0.8em;">(RLM-powered)</span></h1>
+                <h2>From long-context bottlenecks to<br>low-cost automated RCA and<br>policy compliance.</h2>
+                
+                <div class="micro-diagram">
+                    <div class="chip">Traces</div>
+                    <div class="micro-diagram-line"></div>
+                    <div class="chip">RLM Runtime</div>
+                    <div class="micro-diagram-line"></div>
+                    <div class="chip">Findings</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="right-content">
+            <div class="minimap-container">
+                <!-- Abstract nodes -->
+                <div class="node" style="width: 12px; height: 12px; top: 10%; left: 50%;"></div>
+                <div class="node" style="width: 8px; height: 8px; top: 25%; left: 30%;"></div>
+                <div class="node" style="width: 8px; height: 8px; top: 25%; left: 70%;"></div>
+                <div class="node" style="width: 6px; height: 6px; top: 40%; left: 20%;"></div>
+                <div class="node" style="width: 6px; height: 6px; top: 40%; left: 40%;"></div>
+                <div class="node" style="width: 6px; height: 6px; top: 40%; left: 60%;"></div>
+                <div class="node" style="width: 6px; height: 6px; top: 40%; left: 80%;"></div>
+
+                <!-- Abstract links (simple implementation for visuals) -->
+                <div class="link" style="width: 100px; top: 11%; left: 30%; transform: rotate(135deg);"></div>
+                <div class="link" style="width: 100px; top: 11%; left: 50%; transform: rotate(45deg);"></div>
+
+                <!-- More faint nodes to simulate complexity -->
+                 <div class="node" style="width: 4px; height: 4px; top: 60%; left: 15%;"></div>
+                 <div class="node" style="width: 4px; height: 4px; top: 60%; left: 25%;"></div>
+                 <div class="node" style="width: 4px; height: 4px; top: 60%; left: 35%;"></div>
+                 <div class="node" style="width: 4px; height: 4px; top: 60%; left: 45%;"></div>
+                 
+                 <!-- Watermark text (optional, implied by 'mini-map') -->
+            </div>
+        </div>
+
+        <div class="footer">
+            <div class="slide-number">Slide 1/12</div>
+            <div class="tag-evidence">evidence</div>
+        </div>
+    </div>
+
+</body>
+</html>

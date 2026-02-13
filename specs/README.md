@@ -30,16 +30,29 @@ Recommended table format: `Spec | Code | Purpose | Keywords`.
 | [`DESIGN.md`](../DESIGN.md) | `artifacts/investigator_runs/` | RunRecord-equivalent contract required for every RCA/compliance/dossier run | run record, reproducibility, audit trail, evaluator run |
 | [`formal_contracts.md`](./formal_contracts.md) | `artifacts/investigator_runs/` | required field-level contract for RunRecord and evaluator outputs | schema validation, required fields, artifact contracts |
 
+## Phase 10 — RLM-RCA System
+
+| Spec | Code | Purpose | Keywords |
+|------|------|---------|----------|
+| [`RLM_RCA_ARCHITECTURE.md`](../execplan/phase10/RLM_RCA_ARCHITECTURE.md) | `investigator/rca/`, `investigator/runtime/` | RLM-based RCA system architecture, REPL-primary execution, per-hypothesis recursion, subprocess sandbox (diagram-rich reference) | rlm rca, repl harness, per-hypothesis, subprocess sandbox, architecture |
+| [`RLM_RCA_ARCHITECTURE_EXECPLAN.md`](../execplan/phase10/RLM_RCA_ARCHITECTURE_EXECPLAN.md) | `investigator/rca/`, `investigator/runtime/` | PLANS.md-compliant architecture ExecPlan with decision log, validation steps, and novice orientation | rlm rca, architecture, execplan, decision log |
+| [`RLM_RCA_IMPLEMENTATION_PLAN.md`](../execplan/phase10/RLM_RCA_IMPLEMENTATION_PLAN.md) | `apps/demo_agent/`, `investigator/rca/`, `investigator/runtime/` | 6-phase implementation plan for autonomous RCA via RLM (table-rich reference) | implementation plan, fault injector, cli, evaluation, phase 10 |
+| [`RLM_RCA_IMPLEMENTATION_EXECPLAN.md`](../execplan/phase10/RLM_RCA_IMPLEMENTATION_EXECPLAN.md) | `apps/demo_agent/`, `investigator/rca/`, `investigator/runtime/` | PLANS.md-compliant implementation ExecPlan with milestones, concrete steps, and acceptance criteria | implementation, execplan, milestones, fault injector, cli, evaluation |
+
 ## Phase Status
 
 - Phases 1-5 are active in scope.
+- **Phase 10** (RLM-RCA system) is design-locked and ready for implementation.
 - RLM is the core implementation path for Phase 2 (RCA), Phase 3 (policy compliance), and Phase 4 (incident dossier).
 - Phase 5 is hardening and expansion of the same RLM runtime, with these pinned constraints:
   - read-only Inspection API boundary
   - RCA/compliance/dossier output schema compatibility
-  - sandbox policy (no network/filesystem; allowlisted tool APIs only)
+  - sandbox policy (no network/filesystem; subprocess sandbox with import blocklist)
 
 ## External RLM References
 
 - `rlm/2512.24601v2.pdf` (primary recursive-programming reference)
 - `https://kmad.ai/Recursive-Language-Models-Security-Audit` (security-oriented implementation reference)
+- `https://www.primeintellect.ai/blog/rlm` (Prime Intellect RLM implementation — tools, sub-LLMs, sandboxing)
+- `https://alexzhang13.github.io/blog/2025/rlm/` (RLM explainer)
+- `https://www.dbreunig.com/2026/02/09/the-potential-of-rlms.html` (RLM potential and patterns)

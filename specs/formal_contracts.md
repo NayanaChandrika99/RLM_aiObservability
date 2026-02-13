@@ -108,9 +108,14 @@ Persist one auditable record for each evaluator invocation (success, partial, or
       "iterations": "integer",
       "depth_reached": "integer",
       "tool_calls": "integer",
+      "llm_subcalls": "integer",
       "tokens_in": "integer",
-      "tokens_out": "integer"
-    }
+      "tokens_out": "integer",
+      "cost_usd": "number"
+    },
+    "state_trajectory": ["string"],
+    "subcall_metadata": ["object"],
+    "repl_trajectory": ["object"]
   },
   "output_ref": {
     "artifact_type": "RCAReport|ComplianceReport|IncidentDossier|null",
@@ -147,14 +152,14 @@ Persist one auditable record for each evaluator invocation (success, partial, or
   "primary_label": "retrieval_failure|tool_failure|instruction_failure|upstream_dependency_failure|data_schema_mismatch",
   "summary": "string",
   "confidence": "number",
-  "evidence": [
+  "evidence_refs": [
     {
       "trace_id": "string",
       "span_id": "string",
-      "artifact_id": "string",
-      "artifact_type": "span|tool_call|retrieval_chunk|config_diff",
-      "evidence_ref": "EvidenceRef",
-      "why": "string"
+      "kind": "SPAN|TOOL_IO|RETRIEVAL_CHUNK|MESSAGE|CONFIG_DIFF",
+      "ref": "string",
+      "excerpt_hash": "string",
+      "ts": "RFC3339|null"
     }
   ],
   "remediation": ["string"],
@@ -162,8 +167,12 @@ Persist one auditable record for each evaluator invocation (success, partial, or
 }
 ```
 
+Note: the field is `evidence_refs` (flat list of canonical `EvidenceRef` objects), matching
+`investigator/runtime/contracts.py`. The previous `evidence` array with nested
+`artifact_id`/`artifact_type`/`why` is superseded.
+
 Rules:
-- `evidence` must be non-empty.
+- `evidence_refs` must be non-empty.
 - `confidence` must be in `0..1`.
 
 ## Contract 3: ComplianceReport
