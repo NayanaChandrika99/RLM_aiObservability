@@ -186,6 +186,7 @@ class ReplLoop:
         *,
         objective: str,
         input_vars: dict[str, Any],
+        pre_filter_context: dict[str, Any] | None = None,
         budget: RuntimeBudget,
         depth: int = 0,
         require_subquery_for_non_trivial: bool = False,
@@ -203,7 +204,14 @@ class ReplLoop:
             temperature=self._temperature,
             max_llm_subcalls=budget.max_subcalls,
         )
+        normalized_pre_filter_context: dict[str, Any] = {}
+        if isinstance(pre_filter_context, dict):
+            normalized_pre_filter_context = {
+                str(key): _json_safe(pre_filter_context[key]) for key in pre_filter_context
+            }
         runtime_vars = dict(input_vars)
+        if normalized_pre_filter_context:
+            runtime_vars["pre_filter_context"] = normalized_pre_filter_context
         runtime_vars["available_tools"] = sorted(self._tool_registry.allowed_tools)
         runtime_vars["tool_signatures"] = self._tool_registry.describe_tools()
 
@@ -307,6 +315,7 @@ class ReplLoop:
                         "submit_deadline_iterations_remaining": submit_deadline_iterations_remaining,
                         "allowed_tools": sorted(self._tool_registry.allowed_tools),
                         "tool_signatures": runtime_vars.get("tool_signatures") or {},
+                        "pre_filter_context": normalized_pre_filter_context,
                         "variables": sorted(interpreter.variables.keys()),
                         "history": repl_history,
                     }

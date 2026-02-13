@@ -158,3 +158,64 @@ def test_trace_rca_repl_tightens_per_trace_budget() -> None:
     assert tightened.max_tokens_total == 18000
     assert tightened.max_cost_usd == 0.12
     assert tightened.max_wall_time_sec == 45
+
+
+def test_trace_rca_uses_repl_runtime_by_default(tmp_path: Path) -> None:
+    model_client = _FakeModelClient(
+        step_outputs=[
+            {
+                "reasoning": "Use semantic subquery, then submit.",
+                "code": (
+                    "spans_payload = call_tool('list_spans', trace_id=trace_id)\n"
+                    "label_note = llm_query('Return one RCA label token.')\n"
+                    "SUBMIT("
+                    "primary_label='tool_failure',"
+                    "summary=f'Default REPL path label: {label_note}',"
+                    "confidence=0.74,"
+                    "remediation=['Add retries around tool calls.'],"
+                    "evidence_refs=evidence_seed,"
+                    "gaps=[]"
+                    ")"
+                ),
+            }
+        ],
+        subquery_outputs=["tool_failure"],
+    )
+    engine = TraceRCAEngine(
+        inspection_api=_InspectionAPI(),
+        model_client=model_client,
+    )
+
+    report, run_record = run_engine(
+        engine=engine,
+        request=TraceRCARequest(trace_id="trace-rca-repl", project_name="phase10"),
+        run_id="run-phase10-rca-default-repl",
+        artifacts_root=tmp_path / "artifacts" / "investigator_runs",
+    )
+
+    assert report.primary_label == "tool_failure"
+    assert model_client.calls > 0
+    assert run_record.runtime_ref.repl_trajectory
+
+
+def test_trace_rca_falls_back_to_deterministic_when_repl_step_is_invalid() -> None:
+    model_client = _FakeModelClient(
+        step_outputs=[
+            {
+                "reasoning": "Invalid output missing code.",
+                "code": "",
+            }
+        ],
+        subquery_outputs=[],
+    )
+    engine = TraceRCAEngine(
+        inspection_api=_InspectionAPI(),
+        model_client=model_client,
+    )
+
+    report = engine.run(TraceRCARequest(trace_id="trace-rca-repl", project_name="phase10"))
+    runtime_signals = engine.get_runtime_signals()
+
+    assert report.primary_label == "upstream_dependency_failure"
+    assert runtime_signals.get("rca_judgment_mode") == "deterministic_fallback"
+    assert any("REPL RCA judgment failed" in str(gap) for gap in report.gaps)

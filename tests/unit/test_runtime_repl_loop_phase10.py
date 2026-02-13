@@ -752,3 +752,49 @@ def test_repl_loop_recovers_with_deterministic_submit_on_planning_budget_exhaust
     assert any(
         "max_tokens_total reached" in str(item) for item in (result.output.get("gaps") or [])
     )
+
+
+def test_repl_loop_includes_pre_filter_context_in_prompt_context() -> None:
+    model_client = _FakeModelClient(
+        step_outputs=[
+            {
+                "reasoning": "Submit immediately.",
+                "code": (
+                    "SUBMIT("
+                    "primary_label='instruction_failure',"
+                    "summary='done',"
+                    "confidence=0.5,"
+                    "remediation=['none'],"
+                    "evidence_refs=evidence_seed,"
+                    "gaps=[]"
+                    ")"
+                ),
+            }
+        ],
+        subquery_outputs=[],
+    )
+    loop = ReplLoop(
+        tool_registry=ToolRegistry(inspection_api=_InspectionAPI()),
+        model_client=model_client,
+        model_name="gpt-5-mini",
+        temperature=0.0,
+    )
+
+    _ = loop.run(
+        objective="Phase10 pre-filter context prompt",
+        input_vars={"trace_id": "trace-repl", "evidence_seed": []},
+        pre_filter_context={
+            "hot_spans": [{"span_id": "root", "status_code": "ERROR"}],
+            "branch_span_ids": ["root"],
+            "preliminary_label": "instruction_failure",
+        },
+        budget=RuntimeBudget(max_iterations=1, max_subcalls=1),
+        require_subquery_for_non_trivial=False,
+    )
+
+    assert model_client.requests
+    first_request = model_client.requests[0]
+    prompt_text = str(getattr(first_request, "user_prompt", ""))
+    assert "\"pre_filter_context\"" in prompt_text
+    assert "\"hot_spans\"" in prompt_text
+    assert "\"branch_span_ids\"" in prompt_text

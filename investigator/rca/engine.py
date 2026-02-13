@@ -80,9 +80,15 @@ class TraceRCAEngine:
         self._max_hot_spans = max_hot_spans
         self._max_branch_depth = max_branch_depth
         self._max_branch_nodes = max_branch_nodes
+        auto_repl_runtime = (
+            model_client is not None
+            and not use_llm_judgment
+            and not use_recursive_runtime
+            and not use_repl_runtime
+        )
         self._use_llm_judgment = use_llm_judgment
         self._use_recursive_runtime = use_recursive_runtime
-        self._use_repl_runtime = use_repl_runtime
+        self._use_repl_runtime = use_repl_runtime or auto_repl_runtime
         self._recursive_budget = recursive_budget or RuntimeBudget(
             max_iterations=12,
             max_depth=max_branch_depth,
@@ -90,7 +96,7 @@ class TraceRCAEngine:
             max_subcalls=40,
             max_tokens_total=200000,
         )
-        self._fallback_on_llm_error = fallback_on_llm_error
+        self._fallback_on_llm_error = fallback_on_llm_error or auto_repl_runtime
         self._prompt_definition: PromptDefinition = _TRACE_RCA_PROMPT_DEFINITION
         if self._use_llm_judgment and self._use_repl_runtime:
             self._prompt_definition = get_prompt_definition(_REPL_RCA_PROMPT_ID)
@@ -480,18 +486,28 @@ class TraceRCAEngine:
             temperature=self.temperature,
         )
         tuned_loop_budget = self._tighten_repl_trace_budget(self._recursive_budget)
+        candidate_summaries = [
+            self._candidate_snapshot(candidate) for candidate in hot_candidates[: self._max_hot_spans]
+        ]
+        pre_filter_context = {
+            "hot_spans": candidate_summaries,
+            "branch_span_ids": [
+                str(item.get("span_id") or "")
+                for item in candidate_summaries
+                if str(item.get("span_id") or "")
+            ],
+            "preliminary_label": deterministic_label,
+        }
         loop_result = repl_loop.run(
             objective=f"trace_rca repl investigation for trace {request.trace_id}",
             input_vars={
                 "trace_id": request.trace_id,
                 "allowed_labels": sorted(_ALLOWED_RCA_LABELS),
                 "deterministic_label_hint": deterministic_label,
-                "candidate_summaries": [
-                    self._candidate_snapshot(candidate)
-                    for candidate in hot_candidates[: self._max_hot_spans]
-                ],
+                "candidate_summaries": candidate_summaries,
                 "evidence_seed": [self._evidence_dict(ref) for ref in evidence_refs[:20]],
             },
+            pre_filter_context=pre_filter_context,
             budget=tuned_loop_budget,
             require_subquery_for_non_trivial=True,
         )
@@ -519,6 +535,11 @@ class TraceRCAEngine:
                     loop_result.error_message or "REPL RCA runtime output was invalid."
                 )
             raise RuntimeError(loop_result.error_message or "REPL RCA runtime failed.")
+        if loop_result.status == "terminated_budget":
+            raise RuntimeError(
+                loop_result.budget_reason
+                or "REPL RCA runtime reached budget limits before finalize."
+            )
 
         payload = loop_result.output if isinstance(loop_result.output, dict) else {}
         label_candidate = str(payload.get("primary_label") or "").strip()
@@ -881,9 +902,16 @@ class TraceRCAEngine:
             f"RCA labeled trace as {label}."
         )
         remediation = self._remediation_for_label(label)
-        if self._use_llm_judgment:
+        runtime_mode: str | None = None
+        if self._use_repl_runtime:
+            runtime_mode = "repl"
+        elif self._use_recursive_runtime and self._use_llm_judgment:
+            runtime_mode = "recursive"
+        elif self._use_llm_judgment:
+            runtime_mode = "llm"
+        if runtime_mode is not None:
             try:
-                if self._use_repl_runtime:
+                if runtime_mode == "repl":
                     label, summary, confidence, remediation, llm_gaps = self._repl_llm_rca_judgment(
                         request=request,
                         inspection_api=inspection_api,
@@ -891,7 +919,7 @@ class TraceRCAEngine:
                         deterministic_label=label,
                         evidence_refs=deduped,
                     )
-                elif self._use_recursive_runtime:
+                elif runtime_mode == "recursive":
                     label, summary, confidence, remediation, llm_gaps = self._recursive_llm_rca_judgment(
                         request=request,
                         inspection_api=inspection_api,
@@ -908,11 +936,16 @@ class TraceRCAEngine:
                     )
                 if llm_gaps:
                     gaps.extend(llm_gaps)
-            except ModelOutputInvalidError as exc:
+            except Exception as exc:
                 if not self._fallback_on_llm_error:
                     raise
                 self._runtime_signals["rca_judgment_mode"] = "deterministic_fallback"
-                gaps.append(f"LLM RCA judgment failed and deterministic fallback was used: {exc}")
+                mode_name = {
+                    "repl": "REPL RCA judgment",
+                    "recursive": "Recursive RCA judgment",
+                    "llm": "LLM RCA judgment",
+                }.get(runtime_mode, "RCA judgment")
+                gaps.append(f"{mode_name} failed and deterministic fallback was used: {exc}")
         return RCAReport(
             trace_id=request.trace_id,
             primary_label=label,
