@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 from investigator.inspection_api import PhoenixInspectionAPI
+from investigator.runtime.budget_pool import RuntimeBudgetPool
 from investigator.runtime.llm_client import (
     ModelOutputInvalidError,
     OpenAIModelClient,
@@ -30,6 +31,7 @@ from investigator.runtime.contracts import (
     RuntimeBudget,
     TimeWindow,
     hash_excerpt,
+    utc_now_rfc3339,
 )
 
 
@@ -446,6 +448,329 @@ class TraceRCAEngine:
         }
 
     @staticmethod
+    def _normalize_repl_hypotheses(payload: dict[str, Any]) -> list[dict[str, Any]]:
+        hypotheses_payload = payload.get("hypotheses")
+        if not isinstance(hypotheses_payload, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for item in hypotheses_payload:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("hypothesis_label") or item.get("label") or "").strip()
+            statement = str(
+                item.get("hypothesis_statement") or item.get("statement") or item.get("summary") or ""
+            ).strip()
+            if label not in _ALLOWED_RCA_LABELS or not statement:
+                continue
+            relevant_span_ids_raw = item.get("relevant_span_ids")
+            relevant_span_ids: list[str] = []
+            if isinstance(relevant_span_ids_raw, list):
+                relevant_span_ids = [
+                    str(span_id).strip() for span_id in relevant_span_ids_raw if str(span_id).strip()
+                ]
+            investigation_tools_raw = item.get("investigation_tools")
+            investigation_tools: list[str] = []
+            if isinstance(investigation_tools_raw, list):
+                investigation_tools = [
+                    str(tool_name).strip()
+                    for tool_name in investigation_tools_raw
+                    if str(tool_name).strip()
+                ]
+            key = (label, statement)
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(
+                {
+                    "hypothesis_label": label,
+                    "hypothesis_statement": statement,
+                    "relevant_span_ids": relevant_span_ids,
+                    "investigation_tools": investigation_tools,
+                }
+            )
+        return normalized
+
+    @staticmethod
+    def _coerce_payload_evidence_refs(
+        evidence_payload: Any,
+        *,
+        trace_id: str,
+        default_span_id: str,
+    ) -> list[EvidenceRef]:
+        if not isinstance(evidence_payload, list):
+            return []
+        supported_kinds = {"SPAN", "TOOL_IO", "RETRIEVAL_CHUNK", "MESSAGE", "CONFIG_DIFF"}
+        evidence_refs: list[EvidenceRef] = []
+        for item in evidence_payload:
+            if not isinstance(item, dict):
+                continue
+            evidence_trace_id = str(item.get("trace_id") or trace_id).strip() or trace_id
+            span_id = str(item.get("span_id") or default_span_id).strip() or default_span_id
+            ref = str(item.get("ref") or span_id).strip() or span_id
+            kind_candidate = str(item.get("kind") or "SPAN").strip().upper()
+            kind = kind_candidate if kind_candidate in supported_kinds else "SPAN"
+            excerpt_hash = str(item.get("excerpt_hash") or hash_excerpt(ref)).strip() or hash_excerpt(ref)
+            ts_raw = item.get("ts")
+            ts = str(ts_raw).strip() if isinstance(ts_raw, str) and str(ts_raw).strip() else None
+            evidence_refs.append(
+                EvidenceRef(
+                    trace_id=evidence_trace_id,
+                    span_id=span_id,
+                    kind=kind,  # type: ignore[arg-type]
+                    ref=ref,
+                    excerpt_hash=excerpt_hash,
+                    ts=ts,
+                )
+            )
+        return evidence_refs
+
+    @staticmethod
+    def _hypothesis_sort_key(result: dict[str, Any]) -> tuple[int, float, int, int]:
+        status_rank = 1 if str(result.get("status") or "") == "succeeded" else 0
+        confidence = float(result.get("confidence") or 0.0)
+        evidence_refs = result.get("evidence_refs") or []
+        independent_refs = 0
+        if isinstance(evidence_refs, list):
+            independent_refs = len(
+                {
+                    (str(getattr(item, "kind", "")), str(getattr(item, "ref", "")))
+                    for item in evidence_refs
+                    if isinstance(item, EvidenceRef)
+                }
+            )
+        supporting_facts = result.get("supporting_facts") or []
+        supporting_count = len(supporting_facts) if isinstance(supporting_facts, list) else 0
+        return status_rank, confidence, independent_refs, supporting_count
+
+    def _run_repl_hypothesis_subcalls(
+        self,
+        *,
+        request: TraceRCARequest,
+        inspection_api: Any,
+        hypotheses: list[dict[str, Any]],
+        deterministic_label: str,
+        evidence_refs: list[EvidenceRef],
+    ) -> tuple[
+        list[dict[str, Any]],
+        list[EvidenceRef],
+        list[str],
+        list[dict[str, Any]],
+        dict[str, float | int],
+    ]:
+        if not hypotheses:
+            return [], [], [], [], {
+                "iterations": 0,
+                "depth_reached": 0,
+                "tool_calls": 0,
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "cost_usd": 0.0,
+                "llm_subcalls": 0,
+            }
+
+        model_client = self._resolve_model_client()
+        planner = StructuredActionPlanner(
+            client=model_client,
+            model_name=self.model_name,
+            temperature=self.temperature,
+            prompt_id=_RECURSIVE_RCA_PROMPT_ID,
+        )
+        tool_registry = ToolRegistry(inspection_api=inspection_api)
+        sandbox_guard = SandboxGuard(allowed_tools=tool_registry.allowed_tools)
+        recursive_loop = RecursiveLoop(tool_registry=tool_registry, sandbox_guard=sandbox_guard)
+        budget_pool = RuntimeBudgetPool(budget=self._recursive_budget)
+
+        hypothesis_results: list[dict[str, Any]] = []
+        hypothesis_evidence_refs: list[EvidenceRef] = []
+        hypothesis_gaps: list[str] = []
+        subcall_metadata: list[dict[str, Any]] = []
+        usage_totals: dict[str, float | int] = {
+            "iterations": 0,
+            "depth_reached": 0,
+            "tool_calls": 0,
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "cost_usd": 0.0,
+            "llm_subcalls": 0,
+        }
+        parent_call_id = f"trace_rca:{request.trace_id}"
+        total_hypotheses = len(hypotheses)
+
+        for index, hypothesis in enumerate(hypotheses):
+            hypothesis_label = str(hypothesis.get("hypothesis_label") or "").strip()
+            hypothesis_statement = str(hypothesis.get("hypothesis_statement") or "").strip()
+            relevant_span_ids = [
+                str(item).strip()
+                for item in (hypothesis.get("relevant_span_ids") or [])
+                if str(item).strip()
+            ]
+            investigation_tools = [
+                str(item).strip()
+                for item in (hypothesis.get("investigation_tools") or [])
+                if str(item).strip()
+            ]
+            if not hypothesis_label or not hypothesis_statement:
+                continue
+
+            planner_seed = {
+                "engine_type": self.engine_type,
+                "trace_id": request.trace_id,
+                "allowed_labels": sorted(_ALLOWED_RCA_LABELS),
+                "deterministic_label_hint": deterministic_label,
+                "hypothesis": {
+                    "label": hypothesis_label,
+                    "statement": hypothesis_statement,
+                    "relevant_span_ids": relevant_span_ids,
+                    "investigation_tools": investigation_tools,
+                },
+                "candidate_label": hypothesis_label,
+                "focus": hypothesis_statement,
+                "relevant_span_ids": relevant_span_ids,
+                "investigation_tools": investigation_tools,
+                "evidence_refs": [self._evidence_dict(ref) for ref in evidence_refs[:20]],
+                "delegation_policy": self._delegation_policy(),
+            }
+
+            def _planner(context: dict[str, Any], *, planner_seed: dict[str, Any] = planner_seed) -> dict[str, Any]:
+                merged_context = dict(context)
+                merged_context.update(planner_seed)
+                return planner(merged_context)
+
+            remaining_siblings = max(1, total_hypotheses - index)
+            sub_budget = budget_pool.allocate_run_budget(sibling_count=remaining_siblings)
+            subcall_id = f"hypothesis_{index + 1:03d}"
+            started_at = utc_now_rfc3339()
+            loop_result = recursive_loop.run(
+                actions=[],
+                planner=_planner,
+                budget=sub_budget,
+                budget_pool=budget_pool,
+                delegation_context={
+                    "trace_id": request.trace_id,
+                    "candidate_label": hypothesis_label,
+                    "focus": hypothesis_statement,
+                },
+                depth=1,
+                objective=hypothesis_statement,
+                parent_call_id=parent_call_id,
+                input_ref_hash=hash_excerpt(
+                    f"{request.trace_id}:{hypothesis_label}:{hypothesis_statement}:{index}"
+                ),
+            )
+            completed_at = utc_now_rfc3339()
+
+            usage_totals["iterations"] = int(usage_totals["iterations"]) + int(loop_result.usage.iterations)
+            usage_totals["depth_reached"] = max(
+                int(usage_totals["depth_reached"]),
+                int(loop_result.usage.depth_reached),
+            )
+            usage_totals["tool_calls"] = int(usage_totals["tool_calls"]) + int(loop_result.usage.tool_calls)
+            usage_totals["tokens_in"] = int(usage_totals["tokens_in"]) + int(loop_result.usage.tokens_in)
+            usage_totals["tokens_out"] = int(usage_totals["tokens_out"]) + int(loop_result.usage.tokens_out)
+            usage_totals["cost_usd"] = float(usage_totals["cost_usd"]) + float(loop_result.usage.cost_usd)
+            usage_totals["llm_subcalls"] = int(usage_totals["llm_subcalls"]) + 1
+
+            status = "succeeded"
+            if loop_result.status == "failed":
+                status = "failed"
+            elif loop_result.status == "terminated_budget":
+                status = "terminated_budget"
+
+            subcall_metadata.append(
+                {
+                    "parent_call_id": parent_call_id,
+                    "call_id": subcall_id,
+                    "depth": 1,
+                    "objective": hypothesis_statement,
+                    "input_ref_hash": hash_excerpt(
+                        f"{request.trace_id}:{hypothesis_label}:{hypothesis_statement}:{index}"
+                    ),
+                    "started_at": started_at,
+                    "completed_at": completed_at,
+                    "status": status,
+                    "hypothesis_label": hypothesis_label,
+                }
+            )
+            subcall_metadata.extend(loop_result.subcall_metadata)
+
+            result_payload = loop_result.output if isinstance(loop_result.output, dict) else {}
+            result_label = str(
+                result_payload.get("label") or result_payload.get("primary_label") or hypothesis_label
+            ).strip()
+            if result_label not in _ALLOWED_RCA_LABELS:
+                result_label = hypothesis_label if hypothesis_label in _ALLOWED_RCA_LABELS else deterministic_label
+
+            confidence_raw = result_payload.get("confidence")
+            if isinstance(confidence_raw, (int, float)):
+                confidence = max(0.0, min(1.0, float(confidence_raw)))
+            else:
+                confidence = self._confidence_from_evidence(result_label, evidence_refs)
+
+            supporting_facts_raw = result_payload.get("supporting_facts")
+            supporting_facts: list[str] = []
+            if isinstance(supporting_facts_raw, list):
+                supporting_facts = [
+                    str(item).strip() for item in supporting_facts_raw if str(item).strip()
+                ]
+            elif isinstance(supporting_facts_raw, str) and supporting_facts_raw.strip():
+                supporting_facts = [supporting_facts_raw.strip()]
+            else:
+                summary_text = str(result_payload.get("summary") or "").strip()
+                if summary_text:
+                    supporting_facts = [summary_text]
+
+            default_span_id = relevant_span_ids[0] if relevant_span_ids else "root-span"
+            result_evidence_refs = self._coerce_payload_evidence_refs(
+                result_payload.get("evidence_refs"),
+                trace_id=request.trace_id,
+                default_span_id=default_span_id,
+            )
+            if not result_evidence_refs and evidence_refs:
+                result_evidence_refs = [evidence_refs[0]]
+            hypothesis_evidence_refs.extend(result_evidence_refs)
+
+            result_gaps_raw = result_payload.get("gaps")
+            result_gaps: list[str] = []
+            if isinstance(result_gaps_raw, list):
+                result_gaps = [str(item).strip() for item in result_gaps_raw if str(item).strip()]
+            if loop_result.status == "terminated_budget":
+                result_gaps.append(
+                    loop_result.budget_reason or "Hypothesis subcall reached budget limits."
+                )
+            if loop_result.status == "failed":
+                result_gaps.append(loop_result.error_message or "Hypothesis subcall failed.")
+            hypothesis_gaps.extend([f"{hypothesis_label}: {gap}" for gap in result_gaps if gap])
+
+            hypothesis_results.append(
+                {
+                    "label": result_label,
+                    "confidence": confidence,
+                    "supporting_facts": supporting_facts,
+                    "evidence_refs": result_evidence_refs,
+                    "gaps": result_gaps,
+                    "status": status,
+                    "statement": hypothesis_statement,
+                }
+            )
+
+        deduped_hypothesis_evidence: list[EvidenceRef] = []
+        seen_hypothesis_evidence: set[tuple[str, str]] = set()
+        for evidence in hypothesis_evidence_refs:
+            key = (evidence.kind, evidence.ref)
+            if key in seen_hypothesis_evidence:
+                continue
+            deduped_hypothesis_evidence.append(evidence)
+            seen_hypothesis_evidence.add(key)
+        return (
+            hypothesis_results,
+            deduped_hypothesis_evidence,
+            hypothesis_gaps,
+            subcall_metadata,
+            usage_totals,
+        )
+
+    @staticmethod
     def _tighten_repl_trace_budget(loop_budget: RuntimeBudget) -> RuntimeBudget:
         max_tokens_total = loop_budget.max_tokens_total
         if max_tokens_total is not None:
@@ -472,7 +797,7 @@ class TraceRCAEngine:
         hot_candidates: list[dict[str, Any]],
         deterministic_label: str,
         evidence_refs: list[EvidenceRef],
-    ) -> tuple[str, str, float, list[str], list[str]]:
+    ) -> tuple[str, str, float, list[str], list[str], list[EvidenceRef]]:
         model_client = self._resolve_model_client()
         model_provider = str(getattr(model_client, "model_provider", self.model_provider) or "openai")
         self.prompt_template_hash = get_prompt_definition(_REPL_RCA_PROMPT_ID).prompt_template_hash
@@ -579,7 +904,77 @@ class TraceRCAEngine:
                 loop_result.budget_reason
                 or "REPL runtime reached a budget limit before finalize."
             )
-        return label, summary, confidence, remediation, llm_gaps
+        llm_evidence_refs: list[EvidenceRef] = []
+        hypotheses = self._normalize_repl_hypotheses(payload)
+        if hypotheses:
+            (
+                hypothesis_results,
+                hypothesis_evidence_refs,
+                hypothesis_gaps,
+                hypothesis_subcall_metadata,
+                hypothesis_usage,
+            ) = self._run_repl_hypothesis_subcalls(
+                request=request,
+                inspection_api=inspection_api,
+                hypotheses=hypotheses,
+                deterministic_label=deterministic_label,
+                evidence_refs=evidence_refs,
+            )
+            llm_evidence_refs.extend(hypothesis_evidence_refs)
+            llm_gaps.extend(hypothesis_gaps)
+            self._runtime_signals["iterations"] = int(self._runtime_signals["iterations"]) + int(
+                hypothesis_usage["iterations"]
+            )
+            self._runtime_signals["depth_reached"] = max(
+                int(self._runtime_signals["depth_reached"]),
+                int(hypothesis_usage["depth_reached"]),
+            )
+            self._runtime_signals["tool_calls"] = int(self._runtime_signals["tool_calls"]) + int(
+                hypothesis_usage["tool_calls"]
+            )
+            self._runtime_signals["llm_subcalls"] = int(self._runtime_signals["llm_subcalls"]) + int(
+                hypothesis_usage["llm_subcalls"]
+            )
+            self._runtime_signals["tokens_in"] = int(self._runtime_signals["tokens_in"]) + int(
+                hypothesis_usage["tokens_in"]
+            )
+            self._runtime_signals["tokens_out"] = int(self._runtime_signals["tokens_out"]) + int(
+                hypothesis_usage["tokens_out"]
+            )
+            self._runtime_signals["cost_usd"] = float(self._runtime_signals["cost_usd"]) + float(
+                hypothesis_usage["cost_usd"]
+            )
+            self._runtime_signals["subcall_metadata"] = hypothesis_subcall_metadata
+            self._runtime_signals["subcalls"] = len(hypothesis_subcall_metadata)
+            if hypothesis_results:
+                best_result = max(hypothesis_results, key=self._hypothesis_sort_key)
+                label = str(best_result.get("label") or label).strip()
+                if label not in _ALLOWED_RCA_LABELS:
+                    label = deterministic_label
+                confidence = max(
+                    0.0,
+                    min(
+                        1.0,
+                        float(best_result.get("confidence") or self._confidence_from_evidence(label, evidence_refs)),
+                    ),
+                )
+                supporting_facts = best_result.get("supporting_facts") or []
+                supporting_text = "; ".join(
+                    [str(item).strip() for item in supporting_facts if str(item).strip()]
+                )
+                considered = ", ".join(
+                    [
+                        f"{str(item.get('label') or '')}:{float(item.get('confidence') or 0.0):.2f}"
+                        for item in hypothesis_results
+                    ]
+                )
+                summary = (
+                    f"Hypothesis subcalls selected label {label}. "
+                    f"Supporting facts: {supporting_text or 'none provided'}. "
+                    f"Considered: {considered}."
+                )
+                remediation = self._remediation_for_label(label)
+        return label, summary, confidence, remediation, llm_gaps, llm_evidence_refs
 
     def _recursive_llm_rca_judgment(
         self,
@@ -909,10 +1304,18 @@ class TraceRCAEngine:
             runtime_mode = "recursive"
         elif self._use_llm_judgment:
             runtime_mode = "llm"
+        llm_evidence_refs: list[EvidenceRef] = []
         if runtime_mode is not None:
             try:
                 if runtime_mode == "repl":
-                    label, summary, confidence, remediation, llm_gaps = self._repl_llm_rca_judgment(
+                    (
+                        label,
+                        summary,
+                        confidence,
+                        remediation,
+                        llm_gaps,
+                        llm_evidence_refs,
+                    ) = self._repl_llm_rca_judgment(
                         request=request,
                         inspection_api=inspection_api,
                         hot_candidates=hot_candidates,
@@ -936,6 +1339,12 @@ class TraceRCAEngine:
                     )
                 if llm_gaps:
                     gaps.extend(llm_gaps)
+                for llm_evidence in llm_evidence_refs:
+                    key = (llm_evidence.kind, llm_evidence.ref)
+                    if key in seen:
+                        continue
+                    deduped.append(llm_evidence)
+                    seen.add(key)
             except Exception as exc:
                 if not self._fallback_on_llm_error:
                     raise

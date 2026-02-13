@@ -33,10 +33,12 @@ Output constraints:
   `controls_version`, `app_type`, `tools_used`, `data_domains`, `control_id`, `snapshot_id`,
   `base_snapshot_id`, `target_snapshot_id`, `pattern`, `fields`, `text_or_chunks`, `tag`.
 - `delegate_subcall.context` keys are limited to:
-  `trace_id`, `candidate_label`, `focus`, `control_id`, `required_evidence`.
+  `trace_id`, `candidate_label`, `focus`, `control_id`, `required_evidence`,
+  `hypothesis_statement`, `relevant_span_ids`, `investigation_tools`.
 - `synthesize.output` and `finalize.output` keys are limited to:
   `summary`, `primary_label`, `pass_fail`, `remediation`, `confidence`, `incident_summary`,
   `rationale`, `covered_requirements`, `missing_evidence`, `gaps`, `evidence_refs`,
+  `label`, `supporting_facts`,
   `hypotheses`, `recommended_actions`.
 - Keep args/output minimal and directly tied to the objective.
 - Return only schema-valid JSON and no analysis text.

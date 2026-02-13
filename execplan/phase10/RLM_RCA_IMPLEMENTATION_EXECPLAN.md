@@ -23,8 +23,8 @@ The evaluation command prints a report showing top-1 accuracy across all 30 trac
 - [x] (2026-02-12) Architecture document and implementation plan written.
 - [x] (2026-02-12) Specs aligned across 9 files to match new decisions.
 - [x] (2026-02-13) Milestone 1: Fault injector and seeded trace generation (Phase A) completed end-to-end (live LlamaIndex path + deterministic fallback + manifest update CLI + unit tests + live Phoenix smoke validation).
-- [ ] Milestone 2: REPL-primary engine refactor (Phase B).
-- [ ] Milestone 3: Per-hypothesis recursive sub-calls (Phase C).
+- [x] (2026-02-13) Milestone 2: REPL-primary engine refactor (Phase B) completed (REPL default path + deterministic pre-filter context + deterministic fallback wiring + Phase 10 RED/GREEN coverage).
+- [x] (2026-02-13) Milestone 3: Per-hypothesis recursive sub-calls (Phase C) completed (hypothesis extraction payload path + per-hypothesis recursive sub-calls + synthesis selection + merged evidence refs + regression coverage).
 - [ ] Milestone 4: Subprocess sandbox with import blocklist (Phase D).
 - [ ] Milestone 5: CLI entrypoint (Phase E).
 - [ ] Milestone 6: End-to-end evaluation (Phase F).
@@ -45,6 +45,8 @@ This section will be populated as implementation proceeds. Placeholder entries b
 
 - Observation: During live instrumentation, OpenTelemetry may emit "Overriding of current TracerProvider is not allowed" in local runs. The warning is non-fatal in this setup; spans are still ingested and queryable when run_id extraction is correct.
 
+- Observation: Recursive sub-call outputs must preserve structured fields (`label`, `confidence`, `supporting_facts`, `evidence_refs`, `gaps`) in `RecursiveLoop` output rather than only merged evidence/gaps. Without this structure, the RCA engine cannot rank hypotheses deterministically.
+
 ## Decision Log
 
 All design decisions are recorded in the architecture ExecPlan (RLM_RCA_ARCHITECTURE_EXECPLAN.md, Decision Log section). This implementation plan inherits those decisions without modification. Key decisions summarized here for quick reference: custom REPL harness, local subprocess sandbox, CLI trigger, gpt-4o-mini everywhere, REPL-primary mode, tool calls plus data analysis, per-hypothesis recursion, modify LlamaIndex tutorial for fault injection.
@@ -63,6 +65,10 @@ Implementation-specific decisions will be recorded here as they arise during cod
   Rationale: Live traces write run_id inside nested phase1 attributes in this environment; strict flattened lookup is brittle and caused false negatives.
   Date/Author: 2026-02-13 / Codex
 
+- Decision: Run per-hypothesis recursive investigations from `TraceRCAEngine` immediately after REPL hypothesis emission, using a shared `RuntimeBudgetPool` and one recursive call per hypothesis.
+  Rationale: This keeps hypothesis execution deterministic, budget-aware, and isolated while reusing the existing recursive runtime contract.
+  Date/Author: 2026-02-13 / Codex
+
 ## Outcomes & Retrospective
 
 This section will be filled at major milestones and at completion.
@@ -70,6 +76,12 @@ This section will be filled at major milestones and at completion.
 - Milestone completion (2026-02-13): Milestone 1 is fully complete. run_with_fault now attempts live LlamaIndex execution first (instrumented to Phoenix), injects profile-specific failure markers, resolves run_id -> trace_id, and falls back deterministically when live mode is unavailable. run_all_seeded_failures updates manifest trace IDs and exports Parquet.
 
 - Validation evidence (2026-02-13): live smoke run returned trace_id 36d4170af1ffe77acbc08c58ee372810 for project phase10-live-smoke, with span names including RetrieverQueryEngine.query, VectorIndexRetriever.retrieve, OpenAI.chat, and tool.call.
+
+- Milestone completion (2026-02-13): Milestone 2 is complete. `TraceRCAEngine` now treats REPL as the primary default path, always computes deterministic pre-filter context before REPL execution, and falls back deterministically when REPL judgment fails or budgets out.
+
+- Milestone completion (2026-02-13): Milestone 3 is complete. REPL hypothesis payloads are normalized in the RCA engine, each hypothesis is investigated via recursive sub-calls, and synthesis chooses the strongest supported hypothesis while merging deduplicated evidence refs into the final report.
+
+- Validation evidence (2026-02-13): `uv run pytest tests/unit/test_trace_rca_engine_phase10_repl.py tests/unit/test_runtime_repl_loop_phase10.py tests/unit/test_runtime_recursive_loop_phase8.py tests/unit/test_trace_rca_engine_phase9_recursive.py tests/unit/test_trace_rca_engine_phase8_llm.py tests/unit/test_phase6_replay_acceptance.py tests/unit/test_investigator_runtime_scaffold.py -q` passed with 39 tests.
 
 ## Context and Orientation
 

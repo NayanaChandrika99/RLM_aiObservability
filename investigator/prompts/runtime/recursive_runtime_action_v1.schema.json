@@ -58,6 +58,15 @@
             "candidate_label": {"type": "string"},
             "focus": {"type": "string"},
             "control_id": {"type": "string"},
+            "hypothesis_statement": {"type": "string"},
+            "relevant_span_ids": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "investigation_tools": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
             "required_evidence": {
               "type": "array",
               "items": {"type": "string"}
@@ -122,6 +131,15 @@
                   "candidate_label": {"type": "string"},
                   "focus": {"type": "string"},
                   "control_id": {"type": "string"},
+                  "hypothesis_statement": {"type": "string"},
+                  "relevant_span_ids": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                  },
+                  "investigation_tools": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                  },
                   "required_evidence": {
                     "type": "array",
                     "items": {"type": "string"}
@@ -159,6 +177,26 @@
                   },
                   "confidence": {"type": "number"},
                   "incident_summary": {"type": "string"},
+                  "label": {"type": "string"},
+                  "supporting_facts": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                  },
+                  "evidence_refs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "trace_id": {"type": ["string", "null"]},
+                        "span_id": {"type": ["string", "null"]},
+                        "kind": {"type": ["string", "null"]},
+                        "ref": {"type": ["string", "null"]},
+                        "excerpt_hash": {"type": ["string", "null"]},
+                        "ts": {"type": ["string", "null"]}
+                      },
+                      "additionalProperties": false
+                    }
+                  },
                   "gaps": {
                     "type": "array",
                     "items": {"type": "string"}
@@ -183,6 +221,11 @@
             },
             "confidence": {"type": "number"},
             "incident_summary": {"type": "string"},
+            "label": {"type": "string"},
+            "supporting_facts": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
             "rationale": {"type": "string"},
             "covered_requirements": {
               "type": "array",

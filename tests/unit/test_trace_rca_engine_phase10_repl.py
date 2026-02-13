@@ -68,9 +68,16 @@ class _InspectionAPI:
 class _FakeModelClient:
     model_provider = "openai"
 
-    def __init__(self, *, step_outputs: list[dict[str, Any]], subquery_outputs: list[str]) -> None:
+    def __init__(
+        self,
+        *,
+        step_outputs: list[dict[str, Any]],
+        subquery_outputs: list[str],
+        recursive_outputs: list[dict[str, Any]] | None = None,
+    ) -> None:
         self._step_outputs = list(step_outputs)
         self._subquery_outputs = list(subquery_outputs)
+        self._recursive_outputs = list(recursive_outputs or [])
         self.calls = 0
 
     def generate_structured(self, request):  # noqa: ANN001, ANN201
@@ -88,6 +95,14 @@ class _FakeModelClient:
             answer = self._subquery_outputs.pop(0)
             payload = {"answer": answer}
             usage = StructuredGenerationUsage(tokens_in=60, tokens_out=12, cost_usd=0.02)
+            return StructuredGenerationResult(
+                output=payload,
+                raw_text=json.dumps(payload, sort_keys=True),
+                usage=usage,
+            )
+        if schema_name == "recursive_runtime_action_v1":
+            payload = self._recursive_outputs.pop(0)
+            usage = StructuredGenerationUsage(tokens_in=70, tokens_out=16, cost_usd=0.03)
             return StructuredGenerationResult(
                 output=payload,
                 raw_text=json.dumps(payload, sort_keys=True),
@@ -219,3 +234,90 @@ def test_trace_rca_falls_back_to_deterministic_when_repl_step_is_invalid() -> No
     assert report.primary_label == "upstream_dependency_failure"
     assert runtime_signals.get("rca_judgment_mode") == "deterministic_fallback"
     assert any("REPL RCA judgment failed" in str(gap) for gap in report.gaps)
+
+
+def test_trace_rca_repl_hypothesis_subcalls_select_best_hypothesis(tmp_path: Path) -> None:
+    model_client = _FakeModelClient(
+        step_outputs=[
+            {
+                "reasoning": "Generate competing hypotheses and submit for recursive drilldowns.",
+                "code": (
+                    "label_note = llm_query('Return one RCA label token from hot spans.')\n"
+                    "SUBMIT("
+                    "primary_label='instruction_failure',"
+                    "summary=f'Initial REPL synthesis: {label_note}',"
+                    "confidence=0.41,"
+                    "remediation=['Collect more evidence before final label.'],"
+                    "evidence_refs=evidence_seed,"
+                    "gaps=[],"
+                    "hypotheses=["
+                    "{'hypothesis_label':'tool_failure','hypothesis_statement':'tool timeout in lookup span',"
+                    "'relevant_span_ids':['root'],'investigation_tools':['get_tool_io']},"
+                    "{'hypothesis_label':'retrieval_failure','hypothesis_statement':'retrieval returned weak context',"
+                    "'relevant_span_ids':['root'],'investigation_tools':['get_retrieval_chunks']}"
+                    "]"
+                    ")"
+                ),
+            }
+        ],
+        subquery_outputs=["tool_failure"],
+        recursive_outputs=[
+            {
+                "action": {
+                    "type": "finalize",
+                    "output": {
+                        "label": "tool_failure",
+                        "confidence": 0.83,
+                        "supporting_facts": ["tool span reported timeout signature"],
+                        "evidence_refs": [
+                            {
+                                "trace_id": "trace-rca-repl",
+                                "span_id": "root",
+                                "kind": "TOOL_IO",
+                                "ref": "tool:hypothesis-tool",
+                                "excerpt_hash": "hypothesis-tool-hash",
+                                "ts": "2026-02-10T00:00:00Z",
+                            }
+                        ],
+                        "gaps": [],
+                    },
+                }
+            },
+            {
+                "action": {
+                    "type": "finalize",
+                    "output": {
+                        "label": "retrieval_failure",
+                        "confidence": 0.37,
+                        "supporting_facts": ["retrieval signal was weaker than tool error evidence"],
+                        "evidence_refs": [
+                            {
+                                "trace_id": "trace-rca-repl",
+                                "span_id": "root",
+                                "kind": "RETRIEVAL_CHUNK",
+                                "ref": "retrieval:hypothesis-retrieval",
+                                "excerpt_hash": "hypothesis-retrieval-hash",
+                                "ts": "2026-02-10T00:00:00Z",
+                            }
+                        ],
+                        "gaps": [],
+                    },
+                }
+            },
+        ],
+    )
+    engine = TraceRCAEngine(
+        inspection_api=_InspectionAPI(),
+        model_client=model_client,
+    )
+
+    report, run_record = run_engine(
+        engine=engine,
+        request=TraceRCARequest(trace_id="trace-rca-repl", project_name="phase10"),
+        run_id="run-phase10-rca-hypothesis-subcalls",
+        artifacts_root=tmp_path / "artifacts" / "investigator_runs",
+    )
+
+    assert report.primary_label == "tool_failure"
+    assert any(ref.ref == "tool:hypothesis-tool" for ref in report.evidence_refs)
+    assert len(run_record.runtime_ref.subcall_metadata) == 2
