@@ -5,210 +5,210 @@
       "fault_profile": "profile_tool_failure",
       "notes": "seeded deterministic case 0",
       "run_id": "seed_run_0000",
-      "trace_id": null
+      "trace_id": "3123708cd9da0101339bb627db41cdf5"
     },
     {
       "expected_label": "retrieval_failure",
       "fault_profile": "profile_retrieval_failure",
       "notes": "seeded deterministic case 1",
       "run_id": "seed_run_0001",
-      "trace_id": null
+      "trace_id": "b39f3b4b5349938bef9f5d9535c0e359"
     },
     {
       "expected_label": "instruction_failure",
       "fault_profile": "profile_instruction_failure",
       "notes": "seeded deterministic case 2",
       "run_id": "seed_run_0002",
-      "trace_id": null
+      "trace_id": "6d2fd1d3cef6a9b8a04ca87032df2101"
     },
     {
       "expected_label": "upstream_dependency_failure",
       "fault_profile": "profile_upstream_dependency_failure",
       "notes": "seeded deterministic case 3",
       "run_id": "seed_run_0003",
-      "trace_id": null
+      "trace_id": "270390003a88dc15cbaab58788379fa2"
     },
     {
       "expected_label": "data_schema_mismatch",
       "fault_profile": "profile_data_schema_mismatch",
       "notes": "seeded deterministic case 4",
       "run_id": "seed_run_0004",
-      "trace_id": null
+      "trace_id": "d8f6e1f691317858469b1f6d5127782d"
     },
     {
       "expected_label": "tool_failure",
       "fault_profile": "profile_tool_failure",
       "notes": "seeded deterministic case 5",
       "run_id": "seed_run_0005",
-      "trace_id": null
+      "trace_id": "12f9b63bd1cc6768650d91f09205c3b9"
     },
     {
       "expected_label": "tool_failure",
       "fault_profile": "profile_tool_failure",
       "notes": "seeded deterministic case 6",
       "run_id": "seed_run_0006",
-      "trace_id": null
+      "trace_id": "e135caad4ab4e55aa73747afc5978541"
     },
     {
       "expected_label": "instruction_failure",
       "fault_profile": "profile_instruction_failure",
       "notes": "seeded deterministic case 7",
       "run_id": "seed_run_0007",
-      "trace_id": null
+      "trace_id": "44922bf704cd6c2d28828b9581d27c07"
     },
     {
       "expected_label": "retrieval_failure",
       "fault_profile": "profile_retrieval_failure",
       "notes": "seeded deterministic case 8",
       "run_id": "seed_run_0008",
-      "trace_id": null
+      "trace_id": "de5c5fdb697f0a3f2ff1e87cc727a143"
     },
     {
       "expected_label": "retrieval_failure",
       "fault_profile": "profile_retrieval_failure",
       "notes": "seeded deterministic case 9",
       "run_id": "seed_run_0009",
-      "trace_id": null
+      "trace_id": "5c9aa9ae7f9c704a9c97f5d2d48fa473"
     },
     {
       "expected_label": "retrieval_failure",
       "fault_profile": "profile_retrieval_failure",
       "notes": "seeded deterministic case 10",
       "run_id": "seed_run_0010",
-      "trace_id": null
+      "trace_id": "6d37a1c597a005288b69a639f9a5ac24"
     },
     {
       "expected_label": "tool_failure",
       "fault_profile": "profile_tool_failure",
       "notes": "seeded deterministic case 11",
       "run_id": "seed_run_0011",
-      "trace_id": null
+      "trace_id": "2ba66e26dd630ad12fd61be664b780c0"
     },
     {
       "expected_label": "data_schema_mismatch",
       "fault_profile": "profile_data_schema_mismatch",
       "notes": "seeded deterministic case 12",
       "run_id": "seed_run_0012",
-      "trace_id": null
+      "trace_id": "3b08ccddcd650ca81d33c6d1f91c7107"
     },
     {
       "expected_label": "tool_failure",
       "fault_profile": "profile_tool_failure",
       "notes": "seeded deterministic case 13",
       "run_id": "seed_run_0013",
-      "trace_id": null
+      "trace_id": "319f20072ddbac217ef9f1a87790bca3"
     },
     {
       "expected_label": "data_schema_mismatch",
       "fault_profile": "profile_data_schema_mismatch",
       "notes": "seeded deterministic case 14",
       "run_id": "seed_run_0014",
-      "trace_id": null
+      "trace_id": "ed5e424c148ef11f05700f52bff46eb2"
     },
     {
       "expected_label": "upstream_dependency_failure",
       "fault_profile": "profile_upstream_dependency_failure",
       "notes": "seeded deterministic case 15",
       "run_id": "seed_run_0015",
-      "trace_id": null
+      "trace_id": "4c46f27e5549274e10a332317d609676"
     },
     {
       "expected_label": "tool_failure",
       "fault_profile": "profile_tool_failure",
       "notes": "seeded deterministic case 16",
       "run_id": "seed_run_0016",
-      "trace_id": null
+      "trace_id": "be0654dec9f9b5515a3600233e4a48a8"
     },
     {
       "expected_label": "tool_failure",
       "fault_profile": "profile_tool_failure",
       "notes": "seeded deterministic case 17",
       "run_id": "seed_run_0017",
-      "trace_id": null
+      "trace_id": "bc3d6b32f37b44a4860457dac65405e3"
     },
     {
       "expected_label": "tool_failure",
       "fault_profile": "profile_tool_failure",
       "notes": "seeded deterministic case 18",
       "run_id": "seed_run_0018",
-      "trace_id": null
+      "trace_id": "3879609aea738a2dbc730364ec8d7b7b"
     },
     {
       "expected_label": "retrieval_failure",
       "fault_profile": "profile_retrieval_failure",
       "notes": "seeded deterministic case 19",
       "run_id": "seed_run_0019",
-      "trace_id": null
+      "trace_id": "134da00b636375f965a96de1f48c4bbb"
     },
     {
       "expected_label": "retrieval_failure",
       "fault_profile": "profile_retrieval_failure",
       "notes": "seeded deterministic case 20",
       "run_id": "seed_run_0020",
-      "trace_id": null
+      "trace_id": "8252357c69d9410cc734c37060596fc3"
     },
     {
       "expected_label": "data_schema_mismatch",
       "fault_profile": "profile_data_schema_mismatch",
       "notes": "seeded deterministic case 21",
       "run_id": "seed_run_0021",
-      "trace_id": null
+      "trace_id": "126565fe1d9b3c20fae2c1fe8825959a"
     },
     {
       "expected_label": "data_schema_mismatch",
       "fault_profile": "profile_data_schema_mismatch",
       "notes": "seeded deterministic case 22",
       "run_id": "seed_run_0022",
-      "trace_id": null
+      "trace_id": "6bf335e4eab23e263c8f21209add54a2"
     },
     {
       "expected_label": "tool_failure",
       "fault_profile": "profile_tool_failure",
       "notes": "seeded deterministic case 23",
       "run_id": "seed_run_0023",
-      "trace_id": null
+      "trace_id": "0dfb14aa4a165e6f9ae4733a4c383187"
     },
     {
       "expected_label": "data_schema_mismatch",
       "fault_profile": "profile_data_schema_mismatch",
       "notes": "seeded deterministic case 24",
       "run_id": "seed_run_0024",
-      "trace_id": null
+      "trace_id": "5f89229737cf7743cbedc89e5c5d4844"
     },
     {
       "expected_label": "retrieval_failure",
       "fault_profile": "profile_retrieval_failure",
       "notes": "seeded deterministic case 25",
       "run_id": "seed_run_0025",
-      "trace_id": null
+      "trace_id": "970f6273bd345d64c006572ffa258ad2"
     },
     {
       "expected_label": "data_schema_mismatch",
       "fault_profile": "profile_data_schema_mismatch",
       "notes": "seeded deterministic case 26",
       "run_id": "seed_run_0026",
-      "trace_id": null
+      "trace_id": "e23411c30e23db6ecfd715d09a257c55"
     },
     {
       "expected_label": "upstream_dependency_failure",
       "fault_profile": "profile_upstream_dependency_failure",
       "notes": "seeded deterministic case 27",
       "run_id": "seed_run_0027",
-      "trace_id": null
+      "trace_id": "2c476f20163f6928fb0a5b7fca81f51e"
     },
     {
       "expected_label": "retrieval_failure",
       "fault_profile": "profile_retrieval_failure",
       "notes": "seeded deterministic case 28",
       "run_id": "seed_run_0028",
-      "trace_id": null
+      "trace_id": "7f47c6c64c49d0676acbc4d065e4b043"
     },
     {
       "expected_label": "upstream_dependency_failure",
       "fault_profile": "profile_upstream_dependency_failure",
       "notes": "seeded deterministic case 29",
       "run_id": "seed_run_0029",
-      "trace_id": null
+      "trace_id": "8a78d901496fa3fd94bdbebf57f55df3"
     }
   ],
   "dataset_id": "seeded_failures_v1",

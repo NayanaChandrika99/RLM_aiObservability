@@ -63,6 +63,38 @@ def test_run_with_fault_falls_back_when_live_dependency_missing(monkeypatch: pyt
     assert fallback_calls == ["fallback:profile_retrieval_failure:seed_run_0001:100000"]
 
 
+def test_run_with_fault_live_only_raises_when_live_dependency_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_live_run(*, fault_profile: str, run_id: str, phoenix_endpoint: str, project_name: str) -> str:
+        raise fault_injector.LiveFaultInjectionUnavailableError("llama-index unavailable")
+
+    fallback_calls: list[str] = []
+
+    def fake_seeded_fallback(
+        *,
+        fault_profile: str,
+        run_id: str,
+        phoenix_endpoint: str,
+        project_name: str,
+        lookup_limit: int,
+    ) -> str:
+        fallback_calls.append(f"fallback:{fault_profile}:{run_id}:{lookup_limit}")
+        return "trace_fallback_321"
+
+    monkeypatch.setattr(fault_injector, "_run_live_llamaindex_fault", fake_live_run)
+    monkeypatch.setattr(fault_injector, "_run_seeded_fallback_fault", fake_seeded_fallback)
+
+    with pytest.raises(fault_injector.LiveFaultInjectionUnavailableError, match="llama-index unavailable"):
+        fault_injector.run_with_fault(
+            fault_profile="profile_retrieval_failure",
+            run_id="seed_run_0001",
+            phoenix_endpoint="http://127.0.0.1:6006",
+            project_name="phase1-seeded-failures",
+            live_only=True,
+        )
+
+    assert fallback_calls == []
+
+
 def test_run_with_fault_raises_when_live_and_fallback_fail(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_live_run(*, fault_profile: str, run_id: str, phoenix_endpoint: str, project_name: str) -> str:
         raise RuntimeError("live path failed unexpectedly")

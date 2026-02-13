@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import pandas as pd
 
-from apps.demo_agent import fault_injector
+from apps.demo_agent import fault_injector, run_seeded_failures
 
 
 def test_run_with_fault_rejects_unknown_profile() -> None:
@@ -110,10 +110,12 @@ def test_run_all_seeded_failures_updates_manifest_and_writes_output(
         phoenix_endpoint: str,
         project_name: str,
         lookup_limit: int,
+        live_only: bool,
     ) -> str:
         assert fault_profile in {"profile_tool_failure", "profile_retrieval_failure"}
         assert project_name == "phase1-seeded-failures"
         assert lookup_limit == 100000
+        assert live_only is False
         return returned[run_id]
 
     export_calls: dict[str, object] = {}
@@ -141,6 +143,127 @@ def test_run_all_seeded_failures_updates_manifest_and_writes_output(
     assert [case["trace_id"] for case in updated_manifest["cases"]] == ["trace_0", "trace_1"]
     assert export_calls["project_name"] == "phase1-seeded-failures"
     assert export_calls["output_path"] == tmp_path / "spans.parquet"
+
+
+def test_run_all_seeded_failures_passes_live_only_to_run_with_fault(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "dataset_id": "seeded_failures_v1",
+                "cases": [
+                    {
+                        "run_id": "seed_run_0000",
+                        "trace_id": None,
+                        "expected_label": "tool_failure",
+                        "fault_profile": "profile_tool_failure",
+                        "notes": "case 0",
+                    }
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    call_args: dict[str, object] = {}
+
+    def fake_run_with_fault(
+        *,
+        fault_profile: str,
+        run_id: str,
+        phoenix_endpoint: str,
+        project_name: str,
+        lookup_limit: int,
+        live_only: bool,
+    ) -> str:
+        call_args["fault_profile"] = fault_profile
+        call_args["run_id"] = run_id
+        call_args["phoenix_endpoint"] = phoenix_endpoint
+        call_args["project_name"] = project_name
+        call_args["lookup_limit"] = lookup_limit
+        call_args["live_only"] = live_only
+        return "trace_live_only"
+
+    monkeypatch.setattr(fault_injector, "run_with_fault", fake_run_with_fault)
+    monkeypatch.setattr(
+        fault_injector,
+        "export_spans_to_parquet",
+        lambda *, endpoint, project_name, output_path, limit=100000: 1,
+    )
+
+    mapping = fault_injector.run_all_seeded_failures(
+        manifest_path=str(manifest_path),
+        phoenix_endpoint="http://127.0.0.1:6006",
+        project_name="phase1-seeded-failures",
+        export_path=tmp_path / "spans.parquet",
+        live_only=True,
+    )
+
+    assert mapping == {"seed_run_0000": "trace_live_only"}
+    assert call_args == {
+        "fault_profile": "profile_tool_failure",
+        "run_id": "seed_run_0000",
+        "phoenix_endpoint": "http://127.0.0.1:6006",
+        "project_name": "phase1-seeded-failures",
+        "lookup_limit": 100000,
+        "live_only": True,
+    }
+
+
+def test_run_seeded_failures_cli_passes_live_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run_all(
+        *,
+        manifest_path: str,
+        phoenix_endpoint: str,
+        project_name: str,
+        export_path: Path,
+        lookup_limit: int,
+        live_only: bool,
+    ) -> dict[str, str]:
+        captured["manifest_path"] = manifest_path
+        captured["phoenix_endpoint"] = phoenix_endpoint
+        captured["project_name"] = project_name
+        captured["export_path"] = export_path
+        captured["lookup_limit"] = lookup_limit
+        captured["live_only"] = live_only
+        return {"seed_run_0000": "trace_live_123"}
+
+    monkeypatch.setattr(run_seeded_failures, "run_all_seeded_failures", fake_run_all)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_seeded_failures.py",
+            "--manifest",
+            "datasets/seeded_failures/manifest.json",
+            "--phoenix-endpoint",
+            "http://127.0.0.1:6006",
+            "--project-name",
+            "phase1-seeded-failures",
+            "--export-path",
+            "datasets/seeded_failures/exports/spans.parquet",
+            "--lookup-limit",
+            "100000",
+            "--live-only",
+        ],
+    )
+
+    run_seeded_failures.main()
+
+    assert captured == {
+        "manifest_path": "datasets/seeded_failures/manifest.json",
+        "phoenix_endpoint": "http://127.0.0.1:6006",
+        "project_name": "phase1-seeded-failures",
+        "export_path": Path("datasets/seeded_failures/exports/spans.parquet"),
+        "lookup_limit": 100000,
+        "live_only": True,
+    }
 
 
 def test_lookup_trace_ids_supports_nested_phase1_dict(

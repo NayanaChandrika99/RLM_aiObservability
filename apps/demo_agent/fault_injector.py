@@ -415,6 +415,7 @@ def run_with_fault(
     phoenix_endpoint: str = "http://127.0.0.1:6006",
     project_name: str = DEFAULT_PROJECT_NAME,
     lookup_limit: int = DEFAULT_LOOKUP_LIMIT,
+    live_only: bool = False,
 ) -> str:
     _load_local_env_file()
     _single_case_manifest(fault_profile=fault_profile, run_id=run_id)
@@ -427,6 +428,8 @@ def run_with_fault(
             project_name=project_name,
         )
     except LiveFaultInjectionUnavailableError:
+        if live_only:
+            raise
         return _run_seeded_fallback_fault(
             fault_profile=fault_profile,
             run_id=run_id,
@@ -435,6 +438,8 @@ def run_with_fault(
             lookup_limit=lookup_limit,
         )
     except Exception as live_exc:  # noqa: BLE001
+        if live_only:
+            raise
         try:
             return _run_seeded_fallback_fault(
                 fault_profile=fault_profile,
@@ -457,6 +462,7 @@ def run_all_seeded_failures(
     project_name: str = DEFAULT_PROJECT_NAME,
     export_path: Path = DEFAULT_EXPORT_PATH,
     lookup_limit: int = DEFAULT_LOOKUP_LIMIT,
+    live_only: bool = False,
 ) -> dict[str, str]:
     path = Path(manifest_path)
     manifest = json.loads(path.read_text(encoding="utf-8"))
@@ -473,6 +479,7 @@ def run_all_seeded_failures(
             phoenix_endpoint=phoenix_endpoint,
             project_name=project_name,
             lookup_limit=lookup_limit,
+            live_only=live_only,
         )
         case["trace_id"] = trace_id
         run_to_trace[run_id] = trace_id

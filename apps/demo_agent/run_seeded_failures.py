@@ -38,6 +38,11 @@ def parse_args() -> argparse.Namespace:
         default=100000,
         help="Maximum number of spans to scan when resolving run_id to trace_id.",
     )
+    parser.add_argument(
+        "--live-only",
+        action="store_true",
+        help="Use only live LlamaIndex fault generation and fail fast if live execution is unavailable.",
+    )
     return parser.parse_args()
 
 
@@ -49,6 +54,7 @@ def main() -> None:
         project_name=args.project_name,
         export_path=Path(args.export_path),
         lookup_limit=args.lookup_limit,
+        live_only=args.live_only,
     )
     print(
         json.dumps(
@@ -56,6 +62,7 @@ def main() -> None:
                 "manifest_path": args.manifest,
                 "project_name": args.project_name,
                 "phoenix_endpoint": args.phoenix_endpoint,
+                "live_only": args.live_only,
                 "cases_processed": len(mapping),
                 "trace_ids": mapping,
             },
