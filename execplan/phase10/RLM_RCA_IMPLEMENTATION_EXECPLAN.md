@@ -27,7 +27,7 @@ The evaluation command prints a report showing top-1 accuracy across all 30 trac
 - [x] (2026-02-13) Milestone 3: Per-hypothesis recursive sub-calls (Phase C) completed (hypothesis extraction payload path + per-hypothesis recursive sub-calls + synthesis selection + merged evidence refs + regression coverage).
 - [x] (2026-02-13) Milestone 4: Subprocess sandbox with import blocklist (Phase D) completed (blocked-module import guard + subprocess execution timeout/output caps + JSON request/response proxy for tool and semantic subquery helpers + in-process fallback path).
 - [x] (2026-02-13) Milestone 5: CLI entrypoint (Phase E) completed (`investigator.rca.cli` supports single-trace and manifest batch execution, parquet mode, budget/model flags, optional writeback suppression, and verbose trajectory output).
-- [ ] Milestone 6: End-to-end evaluation (Phase F).
+- [ ] Milestone 6: End-to-end evaluation (Phase F) is implementation-complete (`investigator.rca.evaluate` + tests), with full 30-trace acceptance run pending refreshed non-null `trace_id` values in the manifest.
 
 ## Surprises & Discoveries
 
@@ -50,6 +50,8 @@ This section will be populated as implementation proceeds. Placeholder entries b
 - Observation: Subprocess sandbox event messages must bypass redirected user stdout/stderr. Using `sys.__stdout__`/`sys.__stdin__` for protocol I/O avoids deadlocks when model code runs under captured output streams.
 
 - Observation: `run_trace_rca_workflow` currently always performs writeback, so CLI-level `--no-writeback` is best implemented with a no-op writeback client to preserve run-record persistence without Phoenix annotation side effects.
+
+- Observation: The current checked-in manifest (`datasets/seeded_failures/manifest.json`) still has null `trace_id` values, so evaluation CLI execution reports 0-case metrics until traces are regenerated or attached.
 
 ## Decision Log
 
@@ -81,6 +83,10 @@ Implementation-specific decisions will be recorded here as they arise during cod
   Rationale: Reuses the existing artifact/writeback lifecycle instead of creating a parallel runtime path in the CLI layer.
   Date/Author: 2026-02-13 / Codex
 
+- Decision: In RCA evaluation, select the latest run per `trace_id` (by `completed_at`/`started_at`) when multiple run records exist in the runs directory.
+  Rationale: Makes repeated batch runs idempotent for metric aggregation without requiring manual run-directory cleanup.
+  Date/Author: 2026-02-13 / Codex
+
 ## Outcomes & Retrospective
 
 This section will be filled at major milestones and at completion.
@@ -102,6 +108,12 @@ This section will be filled at major milestones and at completion.
 - Milestone completion (2026-02-13): Milestone 5 is complete. `investigator/rca/cli.py` now exposes `python -m investigator.rca.cli` with trace/manifest modes, parquet support, runtime budget flags, model override, optional writeback suppression, and batch summary reporting.
 
 - Validation evidence (2026-02-13): `uv run pytest tests/unit/test_trace_rca_cli_phase10.py tests/unit/test_runtime_repl_interpreter_phase10.py tests/unit/test_runtime_repl_loop_phase10.py tests/unit/test_trace_rca_engine_phase10_repl.py tests/unit/test_compliance_phase10_repl.py tests/unit/test_runtime_recursive_loop_phase8.py tests/unit/test_trace_rca_engine_phase9_recursive.py tests/unit/test_trace_rca_engine_phase8_llm.py tests/unit/test_phase6_replay_acceptance.py tests/unit/test_investigator_runtime_scaffold.py -q` passed with 50 tests.
+
+- Milestone completion (2026-02-13): Milestone 6 evaluator implementation is complete. `investigator/rca/evaluate.py` now computes top-1 accuracy, per-label precision/recall/F1, confidence/evidence quality splits, runtime cost/time/token metrics, and budget utilization from run records, then writes `artifacts/evaluation/eval_report.json`.
+
+- Validation evidence (2026-02-13): `uv run pytest tests/unit/test_trace_rca_evaluate_phase10.py tests/unit/test_trace_rca_cli_phase10.py tests/unit/test_runtime_repl_interpreter_phase10.py tests/unit/test_runtime_repl_loop_phase10.py tests/unit/test_trace_rca_engine_phase10_repl.py tests/unit/test_compliance_phase10_repl.py tests/unit/test_runtime_recursive_loop_phase8.py tests/unit/test_trace_rca_engine_phase9_recursive.py tests/unit/test_trace_rca_engine_phase8_llm.py tests/unit/test_phase6_replay_acceptance.py tests/unit/test_investigator_runtime_scaffold.py -q` passed with 53 tests.
+
+- Validation evidence (2026-02-13): `uv run python -m investigator.rca.evaluate --manifest datasets/seeded_failures/manifest.json --runs-dir artifacts/investigator_runs` executed successfully and wrote a report; output currently reflects 0 manifest cases with non-null `trace_id`.
 
 ## Context and Orientation
 
