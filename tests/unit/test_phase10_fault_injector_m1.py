@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 import pytest
+import pandas as pd
 
 from apps.demo_agent import fault_injector
 
@@ -35,6 +36,11 @@ def test_run_with_fault_emits_case_and_returns_trace_id(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(fault_injector, "emit_seeded_traces", fake_emit)
     monkeypatch.setattr(fault_injector, "_lookup_trace_ids_by_run_id", fake_lookup)
+
+    def fake_live_unavailable(*, fault_profile: str, run_id: str, phoenix_endpoint: str, project_name: str) -> str:
+        raise fault_injector.LiveFaultInjectionUnavailableError("llama-index unavailable for fallback branch test")
+
+    monkeypatch.setattr(fault_injector, "_run_live_llamaindex_fault", fake_live_unavailable)
 
     trace_id = fault_injector.run_with_fault(
         fault_profile="profile_tool_failure",
@@ -135,3 +141,64 @@ def test_run_all_seeded_failures_updates_manifest_and_writes_output(
     assert [case["trace_id"] for case in updated_manifest["cases"]] == ["trace_0", "trace_1"]
     assert export_calls["project_name"] == "phase1-seeded-failures"
     assert export_calls["output_path"] == tmp_path / "spans.parquet"
+
+
+def test_lookup_trace_ids_supports_nested_phase1_dict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataframe = pd.DataFrame(
+        {
+            "attributes.phase1": [
+                {"run_id": "seed_run_0000", "project": "phase1-seeded-failures"},
+                {"run_id": "seed_run_9999", "project": "phase1-seeded-failures"},
+            ],
+            "context.trace_id": ["trace_a", "trace_b"],
+            "start_time": [2, 1],
+        }
+    )
+
+    class FakeClient:
+        def __init__(self, *, endpoint: str) -> None:
+            self.endpoint = endpoint
+
+        def get_spans_dataframe(self, *, project_name: str, limit: int):
+            assert project_name == "phase1-seeded-failures"
+            assert limit == 100000
+            return dataframe
+
+    monkeypatch.setattr(fault_injector, "Client", FakeClient)
+
+    mapping = fault_injector._lookup_trace_ids_by_run_id(
+        endpoint="http://127.0.0.1:6006",
+        project_name="phase1-seeded-failures",
+        run_ids=["seed_run_0000"],
+    )
+
+    assert mapping == {"seed_run_0000": "trace_a"}
+
+
+def test_resolve_trace_id_with_retry_eventually_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    call_count = {"value": 0}
+
+    def fake_lookup(*, endpoint: str, project_name: str, run_ids: list[str], limit: int = 100000):
+        call_count["value"] += 1
+        if call_count["value"] < 3:
+            return {}
+        return {run_ids[0]: "trace_retry_ok"}
+
+    monkeypatch.setattr(fault_injector, "_lookup_trace_ids_by_run_id", fake_lookup)
+    monkeypatch.setattr(fault_injector.time, "sleep", lambda *_args, **_kwargs: None)
+
+    trace_id = fault_injector._resolve_trace_id_with_retry(
+        endpoint="http://127.0.0.1:6006",
+        project_name="phase1-seeded-failures",
+        run_id="seed_run_0000",
+        limit=100000,
+        attempts=5,
+        sleep_sec=0.01,
+    )
+
+    assert trace_id == "trace_retry_ok"
+    assert call_count["value"] == 3
