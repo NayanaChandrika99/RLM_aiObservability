@@ -128,3 +128,124 @@ def test_build_single_pass_message_returns_string() -> None:
     assert isinstance(msg, str)
     assert "sp1" in msg
     assert "errors" in msg.lower()
+
+
+# ---------------------------------------------------------------------------
+# Single-pass mode tests
+# ---------------------------------------------------------------------------
+
+from unittest.mock import patch, MagicMock
+from arcgentica.trail_agent import analyze_trace
+
+
+def _make_trace(trace_id: str = "t1", span_id: str = "s1", log_text: str = "ok") -> dict:
+    return {
+        "trace_id": trace_id,
+        "spans": [
+            {
+                "span_id": span_id,
+                "span_name": "main",
+                "status_code": "Unset",
+                "status_message": "",
+                "span_attributes": {},
+                "logs": [{"body": log_text}],
+                "child_spans": [],
+            }
+        ],
+    }
+
+
+def test_single_pass_mode_calls_litellm() -> None:
+    mock_response = MagicMock()
+    mock_response.choices = [
+        MagicMock(message={"content": json.dumps({
+            "errors": [
+                {
+                    "category": "Formatting Errors",
+                    "location": "s1",
+                    "evidence": "missing format",
+                    "description": "Output format wrong",
+                    "impact": "LOW",
+                }
+            ],
+            "scores": [
+                {
+                    "reliability_score": 4,
+                    "reliability_reasoning": "Mostly reliable",
+                    "security_score": 5,
+                    "security_reasoning": "No issues",
+                    "instruction_adherence_score": 3,
+                    "instruction_adherence_reasoning": "Missed format",
+                    "plan_opt_score": 4,
+                    "plan_opt_reasoning": "Decent plan",
+                    "overall": 4.0,
+                }
+            ],
+        })})
+    ]
+
+    with patch("arcgentica.trail_agent.completion", return_value=mock_response) as mock_comp:
+        result = analyze_trace(
+            _make_trace(),
+            model="openai/gpt-5-mini",
+            agentic_mode="single_pass",
+        )
+
+    mock_comp.assert_called_once()
+    assert result["trace_id"] == "t1"
+    assert len(result["errors"]) == 1
+    assert result["errors"][0]["category"] == "Formatting Errors"
+    assert result["errors"][0]["location"] == "s1"
+    assert len(result["scores"]) == 1
+    assert result["scores"][0]["reliability_score"] == 4
+
+
+def test_single_pass_mode_falls_back_on_error() -> None:
+    with patch("arcgentica.trail_agent.completion", side_effect=Exception("API down")):
+        result = analyze_trace(
+            _make_trace(log_text="timed out while waiting"),
+            model="openai/gpt-5-mini",
+            agentic_mode="single_pass",
+        )
+
+    assert result["trace_id"] == "t1"
+    categories = [e["category"] for e in result["errors"]]
+    assert "Timeout Issues" in categories
+
+
+def test_single_pass_validates_locations() -> None:
+    mock_response = MagicMock()
+    mock_response.choices = [
+        MagicMock(message={"content": json.dumps({
+            "errors": [
+                {
+                    "category": "Formatting Errors",
+                    "location": "s1",
+                    "evidence": "valid location",
+                    "description": "ok",
+                    "impact": "LOW",
+                },
+                {
+                    "category": "Goal Deviation",
+                    "location": "INVALID_SPAN",
+                    "evidence": "bad location",
+                    "description": "wrong",
+                    "impact": "HIGH",
+                },
+            ],
+            "scores": [{"reliability_score": 3, "reliability_reasoning": "ok",
+                        "security_score": 5, "security_reasoning": "ok",
+                        "instruction_adherence_score": 3, "instruction_adherence_reasoning": "ok",
+                        "plan_opt_score": 3, "plan_opt_reasoning": "ok", "overall": 3.5}],
+        })})
+    ]
+
+    with patch("arcgentica.trail_agent.completion", return_value=mock_response):
+        result = analyze_trace(
+            _make_trace(),
+            model="openai/gpt-5-mini",
+            agentic_mode="single_pass",
+        )
+
+    locations = [e["location"] for e in result["errors"]]
+    assert all(loc == "s1" for loc in locations), f"Expected all locations to be 's1', got {locations}"
