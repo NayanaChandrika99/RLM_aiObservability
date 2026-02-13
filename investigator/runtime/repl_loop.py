@@ -203,6 +203,8 @@ class ReplLoop:
             model_name=self._model_name,
             temperature=self._temperature,
             max_llm_subcalls=budget.max_subcalls,
+            sandbox_timeout_sec=30,
+            sandbox_max_output_chars=8192,
         )
         normalized_pre_filter_context: dict[str, Any] = {}
         if isinstance(pre_filter_context, dict):

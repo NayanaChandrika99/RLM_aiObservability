@@ -25,7 +25,7 @@ The evaluation command prints a report showing top-1 accuracy across all 30 trac
 - [x] (2026-02-13) Milestone 1: Fault injector and seeded trace generation (Phase A) completed end-to-end (live LlamaIndex path + deterministic fallback + manifest update CLI + unit tests + live Phoenix smoke validation).
 - [x] (2026-02-13) Milestone 2: REPL-primary engine refactor (Phase B) completed (REPL default path + deterministic pre-filter context + deterministic fallback wiring + Phase 10 RED/GREEN coverage).
 - [x] (2026-02-13) Milestone 3: Per-hypothesis recursive sub-calls (Phase C) completed (hypothesis extraction payload path + per-hypothesis recursive sub-calls + synthesis selection + merged evidence refs + regression coverage).
-- [ ] Milestone 4: Subprocess sandbox with import blocklist (Phase D).
+- [x] (2026-02-13) Milestone 4: Subprocess sandbox with import blocklist (Phase D) completed (blocked-module import guard + subprocess execution timeout/output caps + JSON request/response proxy for tool and semantic subquery helpers + in-process fallback path).
 - [ ] Milestone 5: CLI entrypoint (Phase E).
 - [ ] Milestone 6: End-to-end evaluation (Phase F).
 
@@ -46,6 +46,8 @@ This section will be populated as implementation proceeds. Placeholder entries b
 - Observation: During live instrumentation, OpenTelemetry may emit "Overriding of current TracerProvider is not allowed" in local runs. The warning is non-fatal in this setup; spans are still ingested and queryable when run_id extraction is correct.
 
 - Observation: Recursive sub-call outputs must preserve structured fields (`label`, `confidence`, `supporting_facts`, `evidence_refs`, `gaps`) in `RecursiveLoop` output rather than only merged evidence/gaps. Without this structure, the RCA engine cannot rank hypotheses deterministically.
+
+- Observation: Subprocess sandbox event messages must bypass redirected user stdout/stderr. Using `sys.__stdout__`/`sys.__stdin__` for protocol I/O avoids deadlocks when model code runs under captured output streams.
 
 ## Decision Log
 
@@ -69,6 +71,10 @@ Implementation-specific decisions will be recorded here as they arise during cod
   Rationale: This keeps hypothesis execution deterministic, budget-aware, and isolated while reusing the existing recursive runtime contract.
   Date/Author: 2026-02-13 / Codex
 
+- Decision: Implement sandbox helper calls (`call_tool`, `llm_query`, `llm_query_batched`) through a newline-delimited JSON event protocol between parent runtime and subprocess worker.
+  Rationale: Preserves existing REPL helper semantics while moving code execution into an isolated subprocess.
+  Date/Author: 2026-02-13 / Codex
+
 ## Outcomes & Retrospective
 
 This section will be filled at major milestones and at completion.
@@ -82,6 +88,10 @@ This section will be filled at major milestones and at completion.
 - Milestone completion (2026-02-13): Milestone 3 is complete. REPL hypothesis payloads are normalized in the RCA engine, each hypothesis is investigated via recursive sub-calls, and synthesis chooses the strongest supported hypothesis while merging deduplicated evidence refs into the final report.
 
 - Validation evidence (2026-02-13): `uv run pytest tests/unit/test_trace_rca_engine_phase10_repl.py tests/unit/test_runtime_repl_loop_phase10.py tests/unit/test_runtime_recursive_loop_phase8.py tests/unit/test_trace_rca_engine_phase9_recursive.py tests/unit/test_trace_rca_engine_phase8_llm.py tests/unit/test_phase6_replay_acceptance.py tests/unit/test_investigator_runtime_scaffold.py -q` passed with 39 tests.
+
+- Milestone completion (2026-02-13): Milestone 4 is complete. `execute_in_sandbox` now runs model-generated code in a subprocess with blocked-module import guardrails, output truncation, timeout enforcement, protocol-proxied helper requests, and an in-process guarded fallback when subprocess setup fails.
+
+- Validation evidence (2026-02-13): `uv run pytest tests/unit/test_runtime_repl_interpreter_phase10.py tests/unit/test_runtime_repl_loop_phase10.py tests/unit/test_trace_rca_engine_phase10_repl.py tests/unit/test_compliance_phase10_repl.py tests/unit/test_runtime_recursive_loop_phase8.py tests/unit/test_trace_rca_engine_phase9_recursive.py tests/unit/test_trace_rca_engine_phase8_llm.py tests/unit/test_phase6_replay_acceptance.py tests/unit/test_investigator_runtime_scaffold.py -q` passed with 46 tests.
 
 ## Context and Orientation
 
