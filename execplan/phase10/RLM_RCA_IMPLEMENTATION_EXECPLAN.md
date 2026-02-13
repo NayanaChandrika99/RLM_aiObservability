@@ -22,7 +22,7 @@ The evaluation command prints a report showing top-1 accuracy across all 30 trac
 - [x] (2026-02-12) Design session completed, all architectural decisions locked.
 - [x] (2026-02-12) Architecture document and implementation plan written.
 - [x] (2026-02-12) Specs aligned across 9 files to match new decisions.
-- [ ] Milestone 1: Fault injector and seeded trace generation (Phase A).
+- [ ] (2026-02-13) Milestone 1: Fault injector and seeded trace generation (Phase A) (completed: fault injector module, batch CLI, manifest trace_id update flow, unit tests; remaining: replace deterministic seeded emitter with live LlamaIndex fault injection path).
 - [ ] Milestone 2: REPL-primary engine refactor (Phase B).
 - [ ] Milestone 3: Per-hypothesis recursive sub-calls (Phase C).
 - [ ] Milestone 4: Subprocess sandbox with import blocklist (Phase D).
@@ -39,15 +39,23 @@ This section will be populated as implementation proceeds. Placeholder entries b
 
 - Observation: The manifest at datasets/seeded_failures/manifest.json has 30 cases with trace_id set to null. The fault_profile field maps directly to injection strategy names. The distribution is: 9 tool_failure, 8 retrieval_failure, 2 instruction_failure, 4 upstream_dependency_failure, 7 data_schema_mismatch.
 
+- Observation: A fast Milestone 1 baseline can be implemented by wrapping the existing phase1 seeded span emitter and resolving trace_id by run_id from Phoenix, without waiting on full LlamaIndex monkey-patching. This unblocks the trace_id population and batch CLI workflow immediately, but it does not yet satisfy the real LlamaIndex fault path requirement.
+
 ## Decision Log
 
 All design decisions are recorded in the architecture ExecPlan (RLM_RCA_ARCHITECTURE_EXECPLAN.md, Decision Log section). This implementation plan inherits those decisions without modification. Key decisions summarized here for quick reference: custom REPL harness, local subprocess sandbox, CLI trigger, gpt-4o-mini everywhere, REPL-primary mode, tool calls plus data analysis, per-hypothesis recursion, modify LlamaIndex tutorial for fault injection.
 
 Implementation-specific decisions will be recorded here as they arise during coding.
 
+- Decision: Implement Milestone 1 in two steps: first ship deterministic seeded-failure orchestration (fault_injector.py + run_seeded_failures.py + tests), then upgrade to live LlamaIndex fault injection in a follow-up patch.
+  Rationale: Keeps forward progress with testable manifest/trace wiring while isolating the higher-risk LlamaIndex runtime patching work.
+  Date/Author: 2026-02-13 / Codex
+
 ## Outcomes & Retrospective
 
 This section will be filled at major milestones and at completion.
+
+- Milestone checkpoint (2026-02-13): Milestone 1 orchestration interfaces exist and are unit-tested. run_with_fault validates fault profiles, emits seeded traces, and resolves run_id -> trace_id. run_all_seeded_failures updates manifest trace IDs and exports Parquet. Remaining Milestone 1 gap is full live LlamaIndex fault injection behavior.
 
 ## Context and Orientation
 
@@ -61,9 +69,9 @@ The repository uses uv for dependency management. All Python commands are run wi
 
 The current state of the codebase has approximately 70% of the RCA components implemented. Here is what exists and what is missing, file by file.
 
-Existing and complete: investigator/inspection_api/protocol.py defines the 16-method InspectionAPI protocol. investigator/inspection_api/phoenix_client.py implements PhoenixInspectionAPI with full span access, message extraction, tool I/O, retrieval chunks, controls, config snapshots, and search. investigator/runtime/contracts.py defines all dataclasses (EvidenceRef, RCAReport, RunRecord, RuntimeBudget, etc.) with serialization. investigator/runtime/tool_registry.py provides allowlisted tool dispatch with argument sanitization and response hashing. investigator/runtime/sandbox.py validates actions against type and tool allowlists. investigator/runtime/llm_client.py provides OpenAI structured generation with usage tracking. investigator/runtime/prompt_registry.py loads prompt templates and computes hashes. investigator/runtime/repl_loop.py implements the iterative REPL with budget enforcement. investigator/runtime/recursive_loop.py implements recursive action execution with state machine. investigator/runtime/recursive_planner.py produces typed actions from structured model responses. investigator/rca/engine.py implements TraceRCAEngine with hot-span narrowing, branch collection, pattern-based label detection, and four execution modes. investigator/rca/workflow.py orchestrates end-to-end RCA with writeback and run record persistence. investigator/rca/writeback.py builds Phoenix annotation payloads. apps/demo_agent/phase1_langgraph_runner.py and apps/demo_agent/phase1_tutorial_run.py set up Phoenix tracing and run the tutorial agent.
+Existing and complete: investigator/inspection_api/protocol.py defines the 16-method InspectionAPI protocol. investigator/inspection_api/phoenix_client.py implements PhoenixInspectionAPI with full span access, message extraction, tool I/O, retrieval chunks, controls, config snapshots, and search. investigator/runtime/contracts.py defines all dataclasses (EvidenceRef, RCAReport, RunRecord, RuntimeBudget, etc.) with serialization. investigator/runtime/tool_registry.py provides allowlisted tool dispatch with argument sanitization and response hashing. investigator/runtime/sandbox.py validates actions against type and tool allowlists. investigator/runtime/llm_client.py provides OpenAI structured generation with usage tracking. investigator/runtime/prompt_registry.py loads prompt templates and computes hashes. investigator/runtime/repl_loop.py implements the iterative REPL with budget enforcement. investigator/runtime/recursive_loop.py implements recursive action execution with state machine. investigator/runtime/recursive_planner.py produces typed actions from structured model responses. investigator/rca/engine.py implements TraceRCAEngine with hot-span narrowing, branch collection, pattern-based label detection, and four execution modes. investigator/rca/workflow.py orchestrates end-to-end RCA with writeback and run record persistence. investigator/rca/writeback.py builds Phoenix annotation payloads. apps/demo_agent/phase1_langgraph_runner.py and apps/demo_agent/phase1_tutorial_run.py set up Phoenix tracing and run the tutorial agent. apps/demo_agent/fault_injector.py and apps/demo_agent/run_seeded_failures.py now provide the Milestone 1 seeded-failure orchestration baseline (deterministic seeded emitter + trace_id resolution + manifest update CLI).
 
-Missing and needed: apps/demo_agent/fault_injector.py (fault injection for trace generation), apps/demo_agent/run_seeded_failures.py (CLI for batch fault injection), investigator/rca/cli.py (CLI for RCA execution), investigator/rca/evaluate.py (evaluation metrics), investigator/runtime/repl_interpreter.py (subprocess sandbox with import hooks).
+Missing and needed: investigator/rca/cli.py (CLI for RCA execution), investigator/rca/evaluate.py (evaluation metrics), investigator/runtime/repl_interpreter.py (subprocess sandbox with import hooks).
 
 Needs modification: investigator/rca/engine.py (make REPL the primary mode, wire per-hypothesis recursion), investigator/runtime/repl_loop.py (accept pre-filter context, hypothesis extraction), investigator/runtime/recursive_loop.py (structured hypothesis results from sub-calls), prompt templates in investigator/prompts/ (hypothesis decomposition and synthesis instructions).
 
