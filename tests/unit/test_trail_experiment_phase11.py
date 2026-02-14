@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import warnings
 from pathlib import Path
 
@@ -128,6 +129,35 @@ def test_smart_truncate_caps_span_index_for_extreme_trace() -> None:
     assert len(result_text) <= 60_000
     assert "span_index" in result
     assert len(result["span_index"]) < 5000
+
+
+def test_smart_truncate_returns_for_impossible_budget() -> None:
+    trace = {
+        "trace_id": "tiny_budget_trace",
+        "spans": [
+            {
+                "span_id": "root",
+                "span_name": "main",
+                "status_code": "Error",
+                "status_message": "x" * 2000,
+                "span_attributes": {"detail": "y" * 2000},
+                "logs": [{"body": "z" * 2000}],
+                "child_spans": [],
+            }
+        ],
+    }
+
+    result_holder: dict[str, object] = {}
+
+    def _run() -> None:
+        result_holder["result"] = smart_truncate_trace(trace, max_chars=10)
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+    worker.join(timeout=2.0)
+
+    assert not worker.is_alive(), "smart_truncate_trace should return even when max_chars cannot be satisfied."
+    assert isinstance(result_holder.get("result"), dict)
 
 
 def test_build_single_pass_message_returns_string() -> None:
@@ -658,6 +688,41 @@ def test_single_pass_retries_with_smaller_budget_on_context_window_error() -> No
         with patch(
             "arcgentica.trail_agent.completion",
             side_effect=[ContextWindowExceededError("too many tokens"), mock_success],
+        ):
+            result = analyze_trace(
+                _make_trace(),
+                model="openai/gpt-4o-mini",
+                agentic_mode="single_pass",
+                prompt_version="v2",
+                max_span_text_chars=1200,
+            )
+
+    assert len(captured_max_chars) >= 2
+    assert captured_max_chars[0] == 40_000
+    assert captured_max_chars[1] == 20_000
+    assert "analysis_diagnostics" not in result
+
+
+def test_single_pass_retries_on_max_context_length_message() -> None:
+    captured_max_chars: list[int] = []
+
+    def _fake_builder(trace: dict, max_chars: int = 200_000) -> str:
+        del trace
+        captured_max_chars.append(max_chars)
+        return f"prompt-{max_chars}"
+
+    mock_success = MagicMock()
+    mock_success.choices = [MagicMock(message={"content": json.dumps({"errors": [], "scores": [{"overall": 5.0}]})})]
+
+    with patch("arcgentica.trail_agent.build_single_pass_message", side_effect=_fake_builder):
+        with patch(
+            "arcgentica.trail_agent.completion",
+            side_effect=[
+                RuntimeError(
+                    "This model's maximum context length is 128000 tokens, however you requested 140000 tokens."
+                ),
+                mock_success,
+            ],
         ):
             result = analyze_trace(
                 _make_trace(),
