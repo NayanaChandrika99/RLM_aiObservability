@@ -6,7 +6,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from arcgentica.trail_agent import apply_joint_recall_boost_to_prediction
+from arcgentica.trail_agent import (
+    apply_joint_recall_boost_to_prediction,
+    apply_trajectory_action_correlation_to_prediction,
+)
 from arcgentica.trail_reprocess_outputs import reprocess_outputs
 
 
@@ -37,6 +40,51 @@ def test_apply_joint_recall_boost_to_prediction_preserves_scores_and_boosts_erro
     assert "Instruction Non-compliance" in categories
     assert "Tool Selection Errors" in categories
     assert "Goal Deviation" in categories
+
+
+def test_apply_trajectory_action_correlation_to_prediction_relocates_tool_error() -> None:
+    trace_payload = {
+        "trace_id": "trace_tac",
+        "spans": [
+            {
+                "span_id": "step_span",
+                "span_name": "Step 2",
+                "status_code": "Ok",
+                "status_message": "",
+                "span_attributes": {},
+                "logs": [{"body": "attempt page navigation"}],
+                "child_spans": [
+                    {
+                        "span_id": "tool_span",
+                        "span_name": "PageDownTool",
+                        "status_code": "Error",
+                        "status_message": "Error when executing tool",
+                        "span_attributes": {"tool_name": "PageDownTool"},
+                        "logs": [{"body": "unexpected keyword argument 'step_count'"}],
+                        "child_spans": [],
+                    }
+                ],
+            }
+        ],
+    }
+    prediction = {
+        "trace_id": "trace_tac",
+        "errors": [
+            {
+                "category": "Tool Definition Issues",
+                "location": "step_span",
+                "evidence": "PageDownTool raised unexpected keyword argument step_count",
+                "description": "tool schema mismatch",
+                "impact": "MEDIUM",
+            }
+        ],
+        "scores": [{"overall": 3.0}],
+    }
+
+    correlated = apply_trajectory_action_correlation_to_prediction(trace_payload, prediction)
+
+    assert correlated["scores"] == prediction["scores"]
+    assert correlated["errors"][0]["location"] == "tool_span"
 
 
 def test_reprocess_outputs_writes_boosted_results_and_scores(tmp_path: Path) -> None:
@@ -114,6 +162,7 @@ def test_reprocess_outputs_writes_boosted_results_and_scores(tmp_path: Path) -> 
     output_categories = {error["category"] for error in output_payload["errors"]}
 
     assert summary["files_processed"] == 1
+    assert summary["trajectory_action_correlation"] is True
     assert summary["semantic"]["totals"]["dropped_errors"] == 0
     assert summary["metrics"] is not None
     assert summary["metrics"]["joint_accuracy"] == 1.0

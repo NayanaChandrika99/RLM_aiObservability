@@ -3,7 +3,11 @@
 
 from __future__ import annotations
 
-from arcgentica.trail_agent import _boost_joint_recall, _recover_targeted_tp
+from arcgentica.trail_agent import (
+    _apply_trajectory_action_correlation,
+    _boost_joint_recall,
+    _recover_targeted_tp,
+)
 
 
 def test_recover_targeted_tp_does_not_remap_goal_deviation_location() -> None:
@@ -134,6 +138,49 @@ def test_recover_targeted_tp_replaces_freeform_ipi_with_conservative_signal() ->
     ipi_entries = [entry for entry in recovered if entry["category"] == "Incorrect Problem Identification"]
     assert len(ipi_entries) == 1
     assert ipi_entries[0]["location"] == "loc_rnf"
+
+
+def test_apply_trajectory_action_correlation_relocates_to_correlated_tool_span() -> None:
+    trace_payload = {
+        "trace_id": "t5",
+        "spans": [
+            {
+                "span_id": "step_span",
+                "span_name": "Step 6",
+                "status_code": "Ok",
+                "status_message": "",
+                "span_attributes": {},
+                "logs": [{"body": "delegating page navigation"}],
+                "child_spans": [
+                    {
+                        "span_id": "tool_span",
+                        "span_name": "PageDownTool",
+                        "status_code": "Error",
+                        "status_message": "Error when executing tool",
+                        "span_attributes": {"tool_name": "PageDownTool"},
+                        "logs": [{"body": "unexpected keyword argument 'step_count'"}],
+                        "child_spans": [],
+                    }
+                ],
+            }
+        ],
+    }
+    findings = [
+        {
+            "category": "Tool Definition Issues",
+            "location": "step_span",
+            "evidence": "PageDownTool raised unexpected keyword argument step_count",
+            "description": "tool schema mismatch during page navigation",
+            "impact": "MEDIUM",
+        }
+    ]
+
+    correlated, moved = _apply_trajectory_action_correlation(trace_payload, findings)
+
+    assert moved == 1
+    assert len(correlated) == 1
+    assert correlated[0]["location"] == "tool_span"
+    assert correlated[0]["category"] == "Tool Definition Issues"
 
 
 def test_boost_joint_recall_expands_colocated_chain_without_duplicates() -> None:

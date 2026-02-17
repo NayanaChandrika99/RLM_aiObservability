@@ -289,3 +289,35 @@ ABOUTME: Tracks ARC Agentica REPL strategy updates so future sessions can resume
 - Benchmark status (`>= 0.183`): passed.
 - `0.20` robustness goal: not reached on this live run (`0.1893`).
 - Current 2-rule expansion remains a strong improvement over baseline live threshold behavior, but additional tuning is required for robust `>= 0.20` live performance.
+
+## Iteration 2026-02-17: AgentCompass-Inspired Trajectory-Action Correlation Stage
+- Objective: add an explicit trajectory-action correlation stage before location refinement, aligned with AgentCompass’s plan-and-execute, structured-trace reasoning direction.
+
+### Implementation
+- `arcgentica/trail_agent.py`
+  - Added deterministic trajectory graph reconstruction (`parent/child/sibling/neighbor`) and action-token matching.
+  - Added `_apply_trajectory_action_correlation(trace_payload, findings)` to relocate category findings to better-correlated spans.
+  - Wired correlation stage into live agentic flow before `_refine_agentic_locations(...)`.
+  - Added `analysis_diagnostics.trajectory_action_correlation_moves`.
+  - Added reusable helper `apply_trajectory_action_correlation_to_prediction(...)` for offline replay.
+- `arcgentica/trail_reprocess_outputs.py`
+  - Added `--trajectory-action-correlation/--no-trajectory-action-correlation` (default on) for zero-token reprocess A/B.
+
+### Validation
+- Targeted unit tests:
+  - `uv run pytest tests/unit/test_arcgentica_trail_agent_pair_precision_rules.py tests/unit/test_arcgentica_trail_reprocess_outputs.py -q`
+  - Result: `11 passed`
+- Zero-token A/B replay on:
+  - `exp_full_gaia_repl_split_52_mini_jointboost_liveconfirm_20260217T202922Z/outputs`
+  - `trajectory_action_correlation=off`, `joint_recall_boost=off`:
+    - Weighted F1: `0.4384`
+    - Location Accuracy: `0.3254`
+    - Joint Accuracy: `0.1893`
+  - `trajectory_action_correlation=on`, `joint_recall_boost=off`:
+    - Weighted F1: `0.4384`
+    - Location Accuracy: `0.3334`
+    - Joint Accuracy: `0.1962`
+
+### Takeaway
+- The new stage improves pair localization quality in replay (+`0.0069` joint) without adding model calls.
+- Still below robust `0.20` on this source run; next step is a fresh full-GAIA live run with this stage enabled to confirm live uplift.
