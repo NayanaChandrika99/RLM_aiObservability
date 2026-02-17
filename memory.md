@@ -206,3 +206,29 @@ ABOUTME: Tracks ARC Agentica REPL strategy updates so future sessions can resume
   - Joint Accuracy: `0.2245`
 - Benchmark target status:
   - Target `>= 0.183` reached with margin (`+0.0415`).
+
+## Iteration 2026-02-17: Fresh Full-GAIA Agentic Validation Run
+- Objective: verify that joint-accuracy gains are robust on a fresh model run (not only replayed/reprocessed outputs).
+- Experiment:
+  - `exp_full_gaia_repl_split_52_mini_jointboost_fresh_20260217T191614Z`
+  - Model routing: `model=openai/gpt-5-mini`, `root_model=openai/gpt-5.2`, `chunk_model=openai/gpt-5-mini`
+  - Runtime settings: `max_workers=3` (resumed), `max_chunks=6`, `max_num_agents=6`, `joint_recall_boost=true`, `semantic_checks=strict`
+
+### Fresh-run result (full GAIA 117 traces)
+- Weighted F1: `0.3989`
+- Location Accuracy: `0.3578`
+- Joint Accuracy: `0.1851`
+- Traces processed: `117`
+- Traces failed: `0`
+- analysis_fallbacks: `0`
+- delegation_failures: `0`
+- grounded_evidence_rate: `1.0`
+
+### Benchmark target check
+- Target: `>= 0.183`
+- Fresh run achieved: `0.1851`
+- Margin above target: `+0.0021`
+
+### Practical conclusion
+- The target is achieved in a fresh full-GAIA run with stable reliability counters.
+- Offline reprocess remains stronger on this snapshot (`0.2245`) and should stay as the fast tuning path.
