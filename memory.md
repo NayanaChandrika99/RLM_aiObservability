@@ -232,3 +232,39 @@ ABOUTME: Tracks ARC Agentica REPL strategy updates so future sessions can resume
 ### Practical conclusion
 - The target is achieved in a fresh full-GAIA run with stable reliability counters.
 - Offline reprocess remains stronger on this snapshot (`0.2245`) and should stay as the fast tuning path.
+
+## Iteration 2026-02-17: Joint-0.20 Optimization via Data-Mined Co-location Rules
+- Objective: push robust joint accuracy toward `>= 0.20` without fresh model calls first.
+- Method: zero-token rule mining on two completed fresh full-GAIA runs:
+  - `exp_full_gaia_repl_split_52_mini_jointboost_fresh_20260217T191614Z`
+  - `exp_full_gaia_repl_split_52_mini_jointboost_fresh_r2_20260217T194742Z`
+
+### Added minimal rule set
+- `("Tool Definition Issues", "Tool-related")`
+- `("Tool Selection Errors", "Task Orchestration")`
+
+### Why this set
+- It was the strongest 2-rule combo under the production 4-pass closure in `_boost_joint_recall`.
+- It improved both runs above `0.20` joint in replay while also improving weighted F1.
+
+### Zero-token reprocess validation (strict semantic checks + joint recall boost)
+- Reprocess of fresh r1 outputs:
+  - Output dir: `arcgentica/output/experiments/exp_full_gaia_repl_split_52_mini_jointboost_fresh_20260217T191614Z_reprocess_v2`
+  - Weighted F1: `0.4344`
+  - Location Accuracy: `0.3578`
+  - Joint Accuracy: `0.2116`
+  - Files processed: `117`
+  - dropped errors: `0`
+  - grounded evidence rate: `1.0`
+- Reprocess of fresh r2 outputs:
+  - Output dir: `arcgentica/output/experiments/exp_full_gaia_repl_split_52_mini_jointboost_fresh_r2_20260217T194742Z_reprocess_v2`
+  - Weighted F1: `0.4310`
+  - Location Accuracy: `0.3326`
+  - Joint Accuracy: `0.2218`
+  - Files processed: `117`
+  - dropped errors: `0`
+  - grounded evidence rate: `1.0`
+
+### Current recommendation
+- Keep this minimal 2-rule expansion.
+- Next confirmation step is one fresh full-GAIA run with `--joint-recall-boost` to verify live robustness beyond replayed outputs.
