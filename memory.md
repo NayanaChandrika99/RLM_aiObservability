@@ -268,3 +268,24 @@ ABOUTME: Tracks ARC Agentica REPL strategy updates so future sessions can resume
 ### Current recommendation
 - Keep this minimal 2-rule expansion.
 - Next confirmation step is one fresh full-GAIA run with `--joint-recall-boost` to verify live robustness beyond replayed outputs.
+
+## Iteration 2026-02-17: Fresh Full-GAIA Live Confirmation After 2-Rule Expansion
+- Experiment:
+  - `exp_full_gaia_repl_split_52_mini_jointboost_liveconfirm_20260217T202922Z`
+  - Config: `subset=full`, `split=GAIA`, `joint_recall_boost=true`, `semantic_checks=strict`, `model=openai/gpt-5-mini`, `root_model=openai/gpt-5.2`, `chunk_model=openai/gpt-5-mini`
+
+### Fresh run result (live model calls)
+- Weighted F1: `0.4384`
+- Location Accuracy: `0.3254`
+- Joint Accuracy: `0.1893`
+- Traces processed: `117`
+- Traces failed: `0`
+- analysis_fallbacks: `0`
+- delegation_failures: `0`
+- grounded_evidence_rate: `1.0`
+- dropped_errors: `0`
+
+### Interpretation
+- Benchmark status (`>= 0.183`): passed.
+- `0.20` robustness goal: not reached on this live run (`0.1893`).
+- Current 2-rule expansion remains a strong improvement over baseline live threshold behavior, but additional tuning is required for robust `>= 0.20` live performance.
