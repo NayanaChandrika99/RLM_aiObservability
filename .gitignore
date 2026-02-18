@@ -20,12 +20,15 @@ venv/
 datasets/**/exports/
 datasets/**/*.parquet
 
-# Runtime artifacts (keep curated proof outputs, ignore high-volume run dumps/checkpoints)
+# Runtime and experiment artifacts
+artifacts/
 artifacts/investigator_runs/
 artifacts/proof_runs/
 artifacts/investigator_runs*/
 artifacts/evaluation/
 artifacts/logs/
+trail-benchmark/benchmarking/results*/
+trail-benchmark/benchmarking/processed_annotations*/
 
 # Local research assets
 AgentCompass.pdf
