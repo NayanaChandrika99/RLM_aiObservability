@@ -35,3 +35,7 @@ AgentCompass.pdf
 RLM_oservability.pptx
 image.png
 xnotes.md
+
+# Markdown files (keep only root README tracked)
+*.md
+!/README.md
