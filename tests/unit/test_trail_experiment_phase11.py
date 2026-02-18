@@ -309,7 +309,9 @@ from arcgentica.trail_experiment import (
     load_subset_trace_ids,
     ExperimentConfig,
     run_experiment,
+    _build_cross_trace_cluster_report,
 )
+import arcgentica.trail_experiment as trail_experiment
 
 
 def test_load_subset_trace_ids_dev18() -> None:
@@ -332,14 +334,162 @@ def test_experiment_config_defaults() -> None:
         output_dir=Path("/tmp/out"),
     )
     assert cfg.model == "openai/gpt-5-mini"
-    assert cfg.approach == "single_pass"
+    assert cfg.approach == "on"
     assert cfg.subset == "dev18"
     assert cfg.prompt_version == "v2"
     assert cfg.split == "GAIA"
     assert cfg.max_workers == 5
+    assert cfg.root_model is None
+    assert cfg.chunk_model is None
 
 
-def test_run_experiment_writes_outputs_and_metrics(tmp_path: Path) -> None:
+def test_process_trace_file_passes_split_models_to_analyze(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trace_path = tmp_path / "trace.json"
+    trace_payload = {
+        "trace_id": "trace_split_models",
+        "spans": [
+            {
+                "span_id": "span_0",
+                "span_name": "main",
+                "status_code": "Unset",
+                "status_message": "",
+                "span_attributes": {},
+                "logs": [],
+                "child_spans": [],
+            }
+        ],
+    }
+    trace_path.write_text(json.dumps(trace_payload), encoding="utf-8")
+
+    captured: dict[str, object] = {}
+
+    def _fake_analyze(trace_payload: dict, model: str, **kwargs: object) -> dict:
+        captured["trace_id"] = trace_payload.get("trace_id")
+        captured["model"] = model
+        captured["root_model"] = kwargs.get("root_model")
+        captured["chunk_model"] = kwargs.get("chunk_model")
+        return {"trace_id": str(trace_payload.get("trace_id", "")), "errors": [], "scores": [{"overall": 5.0}]}
+
+    monkeypatch.setattr("arcgentica.trail_experiment.analyze_trace", _fake_analyze)
+
+    cfg = ExperimentConfig(
+        experiment_id="split_models",
+        trail_data_dir=tmp_path,
+        gold_dir=tmp_path,
+        output_dir=tmp_path / "out",
+        model="openai/gpt-5-mini",
+        root_model="openai/gpt-5.2",
+        chunk_model="openai/gpt-5-mini",
+    )
+
+    trace_result = trail_experiment._process_trace_file(trace_path, cfg)
+    assert trace_result["status"] == "ok"
+    assert captured["trace_id"] == "trace_split_models"
+    assert captured["model"] == "openai/gpt-5-mini"
+    assert captured["root_model"] == "openai/gpt-5.2"
+    assert captured["chunk_model"] == "openai/gpt-5-mini"
+
+
+def test_run_experiment_rejects_non_repl_approach(tmp_path: Path) -> None:
+    cfg = ExperimentConfig(
+        experiment_id="reject_non_repl",
+        trail_data_dir=tmp_path / "data",
+        gold_dir=tmp_path / "gold",
+        output_dir=tmp_path / "out",
+        approach="single_pass",
+    )
+    with pytest.raises(ValueError, match="REPL-only"):
+        run_experiment(cfg)
+
+
+def test_run_experiment_resumes_without_reanalyzing_completed_traces(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data" / "GAIA"
+    data_dir.mkdir(parents=True)
+    gold_dir = tmp_path / "gold"
+    gold_dir.mkdir(parents=True)
+
+    trace_ids = ["resume_trace_1", "resume_trace_2"]
+    for trace_id in trace_ids:
+        trace = {
+            "trace_id": trace_id,
+            "spans": [
+                {
+                    "span_id": f"{trace_id}_span",
+                    "span_name": "main",
+                    "status_code": "Unset",
+                    "status_message": "",
+                    "span_attributes": {},
+                    "logs": [],
+                    "child_spans": [],
+                }
+            ],
+        }
+        (data_dir / f"{trace_id}.json").write_text(json.dumps(trace), encoding="utf-8")
+        (gold_dir / f"{trace_id}.json").write_text(json.dumps({"errors": [], "scores": [{"overall": 5.0}]}), encoding="utf-8")
+
+    calls = {"count": 0}
+
+    def _fake_analyze(trace_payload: dict, model: str, **kwargs: object) -> dict:
+        del model
+        del kwargs
+        calls["count"] += 1
+        return {"trace_id": trace_payload["trace_id"], "errors": [], "scores": [{"overall": 5.0}]}
+
+    monkeypatch.setattr("arcgentica.trail_experiment.analyze_trace", _fake_analyze)
+    monkeypatch.setattr("arcgentica.trail_experiment._preflight_repl_environment", lambda config: None)
+
+    cfg = ExperimentConfig(
+        experiment_id="resume_repl_only",
+        trail_data_dir=tmp_path / "data",
+        gold_dir=gold_dir,
+        output_dir=tmp_path / "out",
+        subset="full",
+        split="GAIA",
+        approach="on",
+        max_workers=1,
+    )
+
+    run_experiment(cfg)
+    assert calls["count"] == 2
+
+    calls["count"] = 0
+    run_experiment(cfg)
+    assert calls["count"] == 0
+
+    progress_dir = tmp_path / "out" / "resume_repl_only" / "progress"
+    assert progress_dir.exists()
+    assert len(list(progress_dir.glob("*.json"))) == 2
+
+
+def test_preflight_requires_agentica(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    cfg = ExperimentConfig(
+        experiment_id="preflight_agentica",
+        trail_data_dir=tmp_path / "data",
+        gold_dir=tmp_path / "gold",
+        output_dir=tmp_path / "out",
+        approach="on",
+    )
+
+    def _fake_import_module(name: str) -> object:
+        if name == "agentica":
+            raise ModuleNotFoundError("No module named 'agentica'")
+        return object()
+
+    monkeypatch.setattr("arcgentica.trail_experiment.importlib.import_module", _fake_import_module)
+    with pytest.raises(ModuleNotFoundError, match="requires 'agentica'"):
+        trail_experiment._preflight_repl_environment(cfg)
+
+
+def test_run_experiment_writes_outputs_and_metrics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Run experiment with mocked LLM on 2 synthetic traces."""
     data_dir = tmp_path / "data" / "GAIA"
     data_dir.mkdir(parents=True)
@@ -391,6 +541,7 @@ def test_run_experiment_writes_outputs_and_metrics(tmp_path: Path) -> None:
         subset="full",
         split="GAIA",
     )
+    monkeypatch.setattr("arcgentica.trail_experiment._preflight_repl_environment", lambda config: None)
 
     with patch("arcgentica.trail_agent.completion", return_value=mock_response):
         result = run_experiment(cfg)
@@ -412,7 +563,10 @@ def test_run_experiment_writes_outputs_and_metrics(tmp_path: Path) -> None:
     assert log_path.exists()
 
 
-def test_run_experiment_avoids_constant_input_correlation_warning(tmp_path: Path) -> None:
+def test_run_experiment_avoids_constant_input_correlation_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     data_dir = tmp_path / "data" / "GAIA"
     data_dir.mkdir(parents=True)
     gold_dir = tmp_path / "gold"
@@ -460,6 +614,7 @@ def test_run_experiment_avoids_constant_input_correlation_warning(tmp_path: Path
         subset="full",
         split="GAIA",
     )
+    monkeypatch.setattr("arcgentica.trail_experiment._preflight_repl_environment", lambda config: None)
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -535,6 +690,7 @@ def test_run_experiment_uses_threadpool_when_max_workers_gt_one(
     monkeypatch.setattr("arcgentica.trail_experiment.ThreadPoolExecutor", _FakeExecutor)
     monkeypatch.setattr("arcgentica.trail_experiment.as_completed", _fake_as_completed)
     monkeypatch.setattr("arcgentica.trail_experiment.analyze_trace", _fake_analyze)
+    monkeypatch.setattr("arcgentica.trail_experiment._preflight_repl_environment", lambda config: None)
 
     cfg = ExperimentConfig(
         experiment_id="test_parallel_branch",
@@ -818,6 +974,7 @@ def test_run_experiment_writes_semantic_report_for_strict_mode(
         }
 
     monkeypatch.setattr("arcgentica.trail_experiment.analyze_trace", fake_analyze_trace)
+    monkeypatch.setattr("arcgentica.trail_experiment._preflight_repl_environment", lambda config: None)
 
     cfg = ExperimentConfig(
         experiment_id="strict_semantic_report",
@@ -840,6 +997,87 @@ def test_run_experiment_writes_semantic_report_for_strict_mode(
     assert semantic_report["totals"]["evidence_repaired"] == 1
     assert semantic_report["totals"]["dropped_errors"] == 0
     assert result["semantic"]["report_path"] == str(semantic_report_path)
+
+
+def test_run_experiment_aggregates_delegation_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data" / "GAIA"
+    data_dir.mkdir(parents=True)
+    gold_dir = tmp_path / "gold"
+    gold_dir.mkdir(parents=True)
+
+    trace = {
+        "trace_id": "trace_delegation",
+        "spans": [
+            {
+                "span_id": "root_span",
+                "span_name": "main",
+                "status_code": "Error",
+                "status_message": "timed out",
+                "span_attributes": {},
+                "logs": [],
+                "child_spans": [],
+            }
+        ],
+    }
+    (data_dir / "trace_delegation.json").write_text(json.dumps(trace), encoding="utf-8")
+    gold = {
+        "errors": [
+            {
+                "category": "Timeout Issues",
+                "location": "root_span",
+                "evidence": "timed out",
+                "description": "timeout",
+                "impact": "HIGH",
+            }
+        ],
+        "scores": [{"overall": 3.0}],
+    }
+    (gold_dir / "trace_delegation.json").write_text(json.dumps(gold), encoding="utf-8")
+
+    def fake_analyze_trace(trace_payload: dict, model: str, **kwargs: object) -> dict:
+        del trace_payload
+        del model
+        del kwargs
+        return {
+            "trace_id": "trace_delegation",
+            "errors": [
+                {
+                    "category": "Timeout Issues",
+                    "location": "root_span",
+                    "evidence": "timed out",
+                    "description": "timeout",
+                    "impact": "HIGH",
+                }
+            ],
+            "scores": [{"overall": 3.0}],
+            "analysis_diagnostics": {
+                "analysis_mode": "agentic_repl",
+                "delegation_failures": 2,
+                "delegation_failed_chunk_ids": [1, 2],
+            },
+        }
+
+    monkeypatch.setattr("arcgentica.trail_experiment.analyze_trace", fake_analyze_trace)
+    monkeypatch.setattr("arcgentica.trail_experiment._preflight_repl_environment", lambda config: None)
+
+    cfg = ExperimentConfig(
+        experiment_id="delegation_failure_totals",
+        trail_data_dir=tmp_path / "data",
+        gold_dir=gold_dir,
+        output_dir=tmp_path / "out",
+        model="openai/gpt-5-mini",
+        subset="full",
+        split="GAIA",
+        semantic_checks="strict",
+    )
+    run_experiment(cfg)
+
+    semantic_report_path = tmp_path / "out" / "delegation_failure_totals" / "semantic_report.json"
+    semantic_report = json.loads(semantic_report_path.read_text(encoding="utf-8"))
+    assert semantic_report["totals"]["delegation_failures"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -1006,3 +1244,142 @@ def test_single_pass_skips_budget_when_token_preflight_fails() -> None:
     # Only the small-budget prompt (50K tokens) should reach completion()
     assert comp_mock.call_count == 1
     assert "analysis_diagnostics" not in result
+
+
+def test_run_experiment_records_cross_trace_cluster_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data" / "GAIA"
+    data_dir.mkdir(parents=True)
+    gold_dir = tmp_path / "gold"
+    gold_dir.mkdir(parents=True)
+
+    trace = {
+        "trace_id": "trace_cluster_1",
+        "spans": [
+            {
+                "span_id": "span_cluster_1",
+                "span_name": "main",
+                "status_code": "Error",
+                "status_message": "tool schema mismatch",
+                "span_attributes": {},
+                "logs": [],
+                "child_spans": [],
+            }
+        ],
+    }
+    (data_dir / "trace_cluster_1.json").write_text(json.dumps(trace), encoding="utf-8")
+    (gold_dir / "trace_cluster_1.json").write_text(
+        json.dumps({"errors": [], "scores": [{"overall": 3.0}]}),
+        encoding="utf-8",
+    )
+
+    def _fake_analyze(trace_payload: dict, model: str, **kwargs: object) -> dict:
+        del trace_payload
+        del model
+        del kwargs
+        return {
+            "trace_id": "trace_cluster_1",
+            "errors": [
+                {
+                    "category": "Tool Definition Issues",
+                    "location": "span_cluster_1",
+                    "evidence": "unexpected keyword argument step_count",
+                    "description": "tool schema mismatch in page navigation",
+                    "impact": "MEDIUM",
+                }
+            ],
+            "scores": [{"overall": 3.0}],
+        }
+
+    monkeypatch.setattr("arcgentica.trail_experiment.analyze_trace", _fake_analyze)
+    monkeypatch.setattr("arcgentica.trail_experiment._preflight_repl_environment", lambda config: None)
+
+    cfg = ExperimentConfig(
+        experiment_id="cluster_artifact_run",
+        trail_data_dir=tmp_path / "data",
+        gold_dir=gold_dir,
+        output_dir=tmp_path / "out",
+        subset="full",
+        split="GAIA",
+        approach="on",
+        max_workers=1,
+    )
+    result = run_experiment(cfg)
+
+    cluster_path = tmp_path / "out" / "cluster_artifact_run" / "cross_trace_clusters.json"
+    assert cluster_path.exists()
+    cluster_report = json.loads(cluster_path.read_text(encoding="utf-8"))
+    assert cluster_report["total_errors"] == 1
+    assert cluster_report["cluster_count"] == 1
+    assert result["cross_trace_clusters"]["report_path"] == str(cluster_path)
+    assert result["cross_trace_clusters"]["cluster_count"] == 1
+
+
+def test_build_cross_trace_cluster_report_groups_related_errors(tmp_path: Path) -> None:
+    generated_dir = tmp_path / "generated"
+    generated_dir.mkdir(parents=True)
+
+    (generated_dir / "trace_a.json").write_text(
+        json.dumps(
+            {
+                "trace_id": "trace_a",
+                "errors": [
+                    {
+                        "category": "Tool Definition Issues",
+                        "location": "span_a",
+                        "evidence": "PageDownTool unexpected keyword argument step_count",
+                        "description": "tool schema mismatch on page navigation",
+                        "impact": "MEDIUM",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (generated_dir / "trace_b.json").write_text(
+        json.dumps(
+            {
+                "trace_id": "trace_b",
+                "errors": [
+                    {
+                        "category": "Tool Definition Issues",
+                        "location": "span_b",
+                        "evidence": "PageDownTool got unexpected keyword argument",
+                        "description": "schema mismatch while paging",
+                        "impact": "MEDIUM",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (generated_dir / "trace_c.json").write_text(
+        json.dumps(
+            {
+                "trace_id": "trace_c",
+                "errors": [
+                    {
+                        "category": "Resource Not Found",
+                        "location": "span_c",
+                        "evidence": "VisitTool returned 404 not found",
+                        "description": "resource missing from target path",
+                        "impact": "MEDIUM",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = _build_cross_trace_cluster_report(generated_dir)
+
+    assert report["total_errors"] == 3
+    assert report["cluster_count"] == 2
+    assert len(report["clusters"]) == 2
+
+    largest = report["clusters"][0]
+    assert largest["size"] == 2
+    assert largest["dominant_category"] == "Tool Definition Issues"
+    assert set(largest["trace_ids"]) == {"trace_a", "trace_b"}

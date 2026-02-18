@@ -321,3 +321,58 @@ ABOUTME: Tracks ARC Agentica REPL strategy updates so future sessions can resume
 ### Takeaway
 - The new stage improves pair localization quality in replay (+`0.0069` joint) without adding model calls.
 - Still below robust `0.20` on this source run; next step is a fresh full-GAIA live run with this stage enabled to confirm live uplift.
+
+## Iteration 2026-02-17: Fresh Full-GAIA Live Validation With Trajectory-Action Correlation
+- Experiment:
+  - `exp_full_gaia_repl_split_52_mini_jointboost_tac_live_20260217T233006Z`
+  - Config: `subset=full`, `split=GAIA`, `joint_recall_boost=true`, `semantic_checks=strict`, `model=openai/gpt-5-mini`, `root_model=openai/gpt-5.2`, `chunk_model=openai/gpt-5-mini`, `max_workers=3`, `no_resume=true`
+
+### Fresh run result (live model calls)
+- Weighted F1: `0.4369`
+- Location Accuracy: `0.3643`
+- Joint Accuracy: `0.2273`
+- Traces processed: `117`
+- Traces failed: `0`
+- analysis_fallbacks: `0`
+- delegation_failures: `2`
+- grounded_evidence_rate: `1.0`
+- dropped_errors: `0`
+
+### Comparison to prior checkpoints
+- Prior live baseline (`exp_full_gaia_repl_split_52_mini_jointboost_liveconfirm_20260217T202922Z`):
+  - Joint `0.1893`
+- Replay-only trajectory correlation check on same baseline outputs:
+  - Joint `0.1962`
+- New fresh live run:
+  - Joint `0.2273` (above both replay check and prior live baseline)
+
+### Status
+- Benchmark target (`>=0.183`): passed.
+- Robust `0.20` target: passed in fresh full-GAIA live run.
+
+## Iteration 2026-02-17: Cross-Trace Clustering (AgentCompass Lesson)
+- Added deterministic cross-trace clustering artifact generation in `arcgentica/trail_experiment.py`:
+  - `_build_cross_trace_cluster_report(generated_dir)`
+  - Run artifact written at `<experiment_dir>/cross_trace_clusters.json`
+  - Included in experiment record under `cross_trace_clusters` metadata.
+- Cluster builder filters synthetic co-location expansion errors (`description` starting with `Co-located`) to reduce noise from recall-boost artifacts.
+
+### Validation
+- Added tests in `tests/unit/test_trail_experiment_phase11.py`:
+  - `test_run_experiment_records_cross_trace_cluster_artifact`
+  - `test_build_cross_trace_cluster_report_groups_related_errors`
+- Targeted test status:
+  - clustering tests: `2 passed`
+  - trajectory/reprocess suites: `11 passed`
+
+### Real-data cluster snapshot (fresh live run outputs)
+- Source: `.../exp_full_gaia_repl_split_52_mini_jointboost_tac_live_20260217T233006Z/outputs`
+- Generated artifact: `.../cross_trace_clusters.json`
+- Summary:
+  - `files_processed=117`
+  - `total_errors=669`
+  - `cluster_count=36`
+- Top dominant categories by largest clusters:
+  - `Instruction Non-compliance`
+  - `Formatting Errors`
+  - `Tool-related`
