@@ -232,9 +232,36 @@ def test_boost_joint_recall_adds_instruction_non_compliance_for_formatting_ancho
 
     assert "Formatting Errors" in categories_at_location
     assert "Instruction Non-compliance" in categories_at_location
+    assert "Tool-related" in categories_at_location
+    assert "Language-only" in categories_at_location
     assert "Tool Selection Errors" in categories_at_location
     assert "Goal Deviation" in categories_at_location
     assert "Task Orchestration" in categories_at_location
+
+
+def test_boost_joint_recall_expands_tool_output_misinterpretation_chain() -> None:
+    findings = [
+        {
+            "category": "Tool Output Misinterpretation",
+            "location": "loc_out",
+            "evidence": "agent used tool output incorrectly for follow-up action",
+            "description": "misread tool output and proceeded with wrong action",
+            "impact": "MEDIUM",
+        }
+    ]
+
+    boosted = _boost_joint_recall(findings)
+    categories_at_location = {
+        entry["category"]
+        for entry in boosted
+        if entry["location"] == "loc_out"
+    }
+
+    assert "Tool Output Misinterpretation" in categories_at_location
+    assert "Tool-related" in categories_at_location
+    assert "Instruction Non-compliance" in categories_at_location
+    assert "Formatting Errors" in categories_at_location
+    assert "Language-only" in categories_at_location
 
 
 def test_boost_joint_recall_expands_tool_definition_issue_chain() -> None:

@@ -376,3 +376,66 @@ ABOUTME: Tracks ARC Agentica REPL strategy updates so future sessions can resume
   - `Instruction Non-compliance`
   - `Formatting Errors`
   - `Tool-related`
+
+## Iteration 2026-02-18: Fresh Live Check + One Precision-Gate Cycle
+- Fresh full-GAIA live experiment:
+  - `exp_full_gaia_repl_split_52_mini_jointboost_tac_ruleboost_live_20260218T015044Z`
+  - Config: `subset=full`, `split=GAIA`, `joint_recall_boost=true`, `semantic_checks=strict`, `model=openai/gpt-5-mini`, `root_model=openai/gpt-5.2`, `chunk_model=openai/gpt-5-mini`, `max_workers=3`, `no_resume=true`
+
+### Fresh run result (live model calls)
+- Weighted F1: `0.4817`
+- Location Accuracy: `0.3391`
+- Joint Accuracy: `0.2357`
+- Traces processed: `117`
+- Traces failed: `0`
+
+### One precision-gate cycle (no new model calls)
+- Mined rule-added cluster noise from the live outputs.
+- Kept exactly one focused change in recall expansion:
+  - `arcgentica/trail_agent.py`
+  - Added co-location rule: `("Formatting Errors", "Tool-related")`
+- Updated unit expectation in:
+  - `tests/unit/test_arcgentica_trail_agent_pair_precision_rules.py`
+- Targeted test run:
+  - `uv run pytest tests/unit/test_arcgentica_trail_agent_pair_precision_rules.py tests/unit/test_arcgentica_trail_reprocess_outputs.py -q`
+  - Result: `12 passed`
+
+### Replay A/B on the same live outputs (zero-token)
+- Source outputs:
+  - `arcgentica/output/experiments/exp_full_gaia_repl_split_52_mini_jointboost_tac_ruleboost_live_20260218T015044Z/outputs`
+- Baseline replay (`--no-trajectory-action-correlation --no-joint-recall-boost`):
+  - Weighted F1: `0.4817`
+  - Location Accuracy: `0.3391`
+  - Joint Accuracy: `0.2357`
+- Boost replay (`--no-trajectory-action-correlation --joint-recall-boost`):
+  - Weighted F1: `0.4856`
+  - Location Accuracy: `0.3391`
+  - Joint Accuracy: `0.2512`
+
+### Takeaway
+- The precision-gate cycle recovered replay joint above the `~0.241` gate on this live output set.
+- Next confirmation step is one more fresh full-GAIA live run with the updated rule set.
+
+## Iteration 2026-02-18: Live Confirmation After Precision-Gate Rule Update
+- Fresh full-GAIA live experiment:
+  - `exp_full_gaia_repl_split_52_mini_jointboost_tac_ruleboost_live_20260218T025300Z`
+  - Config: same as prior full-GAIA live checks, with updated co-location rule set.
+
+### Fresh run result (live model calls)
+- Weighted F1: `0.4900`
+- Location Accuracy: `0.3256`
+- Joint Accuracy: `0.2136`
+- Traces processed: `117`
+- Traces failed: `0`
+- analysis_fallbacks: `0`
+- delegation_failures: `0`
+- grounded_evidence_rate: `1.0`
+
+### Replay check on this run outputs
+- Reprocess baseline (`--no-joint-recall-boost`): `Joint=0.2136`
+- Reprocess boost (`--joint-recall-boost`): `Joint=0.2136`
+- Interpretation: current deterministic rules are idempotent on this output set; additional pass does not recover joint.
+
+### Takeaway
+- The prior replay gain (`0.2512`) did not transfer reliably to this fresh live sample.
+- Live variance remains the dominant blocker for crossing `0.241` robustly.
