@@ -7,7 +7,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from investigator.rca.engine import TraceRCAEngine, TraceRCARequest
+from investigator.rca.engine import (
+    TraceRCAEngine,
+    TraceRCARequest,
+    resolve_trace_rca_tips_profile,
+)
 from investigator.runtime.contracts import RuntimeBudget
 from investigator.runtime.llm_client import StructuredGenerationResult, StructuredGenerationUsage
 from investigator.runtime.runner import run_engine
@@ -68,13 +72,22 @@ class _InspectionAPI:
 class _FakeModelClient:
     model_provider = "openai"
 
-    def __init__(self, *, step_outputs: list[dict[str, Any]], subquery_outputs: list[str]) -> None:
+    def __init__(
+        self,
+        *,
+        step_outputs: list[dict[str, Any]],
+        subquery_outputs: list[str],
+        recursive_outputs: list[dict[str, Any]] | None = None,
+    ) -> None:
         self._step_outputs = list(step_outputs)
         self._subquery_outputs = list(subquery_outputs)
+        self._recursive_outputs = list(recursive_outputs or [])
         self.calls = 0
+        self.requests: list[Any] = []
 
     def generate_structured(self, request):  # noqa: ANN001, ANN201
         self.calls += 1
+        self.requests.append(request)
         schema_name = str(getattr(request, "response_schema_name", ""))
         if schema_name == "repl_runtime_step_v1":
             payload = self._step_outputs.pop(0)
@@ -88,6 +101,14 @@ class _FakeModelClient:
             answer = self._subquery_outputs.pop(0)
             payload = {"answer": answer}
             usage = StructuredGenerationUsage(tokens_in=60, tokens_out=12, cost_usd=0.02)
+            return StructuredGenerationResult(
+                output=payload,
+                raw_text=json.dumps(payload, sort_keys=True),
+                usage=usage,
+            )
+        if schema_name == "recursive_runtime_action_v1":
+            payload = self._recursive_outputs.pop(0)
+            usage = StructuredGenerationUsage(tokens_in=70, tokens_out=16, cost_usd=0.03)
             return StructuredGenerationResult(
                 output=payload,
                 raw_text=json.dumps(payload, sort_keys=True),
@@ -151,10 +172,252 @@ def test_trace_rca_repl_tightens_per_trace_budget() -> None:
 
     tightened = TraceRCAEngine._tighten_repl_trace_budget(budget)
 
-    assert tightened.max_iterations == 1
+    assert tightened.max_iterations == 5
     assert tightened.max_depth == 3
     assert tightened.max_tool_calls == 6
-    assert tightened.max_subcalls == 2
+    assert tightened.max_subcalls == 5
     assert tightened.max_tokens_total == 18000
     assert tightened.max_cost_usd == 0.12
     assert tightened.max_wall_time_sec == 45
+
+
+def test_trace_rca_uses_repl_runtime_by_default(tmp_path: Path) -> None:
+    model_client = _FakeModelClient(
+        step_outputs=[
+            {
+                "reasoning": "Use semantic subquery, then submit.",
+                "code": (
+                    "spans_payload = call_tool('list_spans', trace_id=trace_id)\n"
+                    "label_note = llm_query('Return one RCA label token.')\n"
+                    "SUBMIT("
+                    "primary_label='tool_failure',"
+                    "summary=f'Default REPL path label: {label_note}',"
+                    "confidence=0.74,"
+                    "remediation=['Add retries around tool calls.'],"
+                    "evidence_refs=evidence_seed,"
+                    "gaps=[]"
+                    ")"
+                ),
+            }
+        ],
+        subquery_outputs=["tool_failure"],
+    )
+    engine = TraceRCAEngine(
+        inspection_api=_InspectionAPI(),
+        model_client=model_client,
+    )
+
+    report, run_record = run_engine(
+        engine=engine,
+        request=TraceRCARequest(trace_id="trace-rca-repl", project_name="phase10"),
+        run_id="run-phase10-rca-default-repl",
+        artifacts_root=tmp_path / "artifacts" / "investigator_runs",
+    )
+
+    assert report.primary_label == "tool_failure"
+    assert model_client.calls > 0
+    assert run_record.runtime_ref.repl_trajectory
+
+
+def test_trace_rca_falls_back_to_deterministic_when_repl_step_is_invalid() -> None:
+    model_client = _FakeModelClient(
+        step_outputs=[
+            {
+                "reasoning": "Invalid output missing code.",
+                "code": "",
+            }
+        ],
+        subquery_outputs=[],
+    )
+    engine = TraceRCAEngine(
+        inspection_api=_InspectionAPI(),
+        model_client=model_client,
+    )
+
+    report = engine.run(TraceRCARequest(trace_id="trace-rca-repl", project_name="phase10"))
+    runtime_signals = engine.get_runtime_signals()
+
+    assert report.primary_label == "upstream_dependency_failure"
+    assert runtime_signals.get("rca_judgment_mode") == "deterministic_fallback"
+    assert any("REPL RCA judgment failed" in str(gap) for gap in report.gaps)
+
+
+def test_trace_rca_repl_hypothesis_subcalls_select_best_hypothesis(tmp_path: Path) -> None:
+    model_client = _FakeModelClient(
+        step_outputs=[
+            {
+                "reasoning": "Generate competing hypotheses and submit for recursive drilldowns.",
+                "code": (
+                    "label_note = llm_query('Return one RCA label token from hot spans.')\n"
+                    "SUBMIT("
+                    "primary_label='instruction_failure',"
+                    "summary=f'Initial REPL synthesis: {label_note}',"
+                    "confidence=0.41,"
+                    "remediation=['Collect more evidence before final label.'],"
+                    "evidence_refs=evidence_seed,"
+                    "gaps=[],"
+                    "hypotheses=["
+                    "{'hypothesis_label':'tool_failure','hypothesis_statement':'tool timeout in lookup span',"
+                    "'relevant_span_ids':['root'],'investigation_tools':['get_tool_io']},"
+                    "{'hypothesis_label':'retrieval_failure','hypothesis_statement':'retrieval returned weak context',"
+                    "'relevant_span_ids':['root'],'investigation_tools':['get_retrieval_chunks']}"
+                    "]"
+                    ")"
+                ),
+            }
+        ],
+        subquery_outputs=["tool_failure"],
+        recursive_outputs=[
+            {
+                "action": {
+                    "type": "finalize",
+                    "output": {
+                        "label": "tool_failure",
+                        "confidence": 0.83,
+                        "supporting_facts": ["tool span reported timeout signature"],
+                        "evidence_refs": [
+                            {
+                                "trace_id": "trace-rca-repl",
+                                "span_id": "root",
+                                "kind": "TOOL_IO",
+                                "ref": "tool:hypothesis-tool",
+                                "excerpt_hash": "hypothesis-tool-hash",
+                                "ts": "2026-02-10T00:00:00Z",
+                            }
+                        ],
+                        "gaps": [],
+                    },
+                }
+            },
+            {
+                "action": {
+                    "type": "finalize",
+                    "output": {
+                        "label": "retrieval_failure",
+                        "confidence": 0.37,
+                        "supporting_facts": ["retrieval signal was weaker than tool error evidence"],
+                        "evidence_refs": [
+                            {
+                                "trace_id": "trace-rca-repl",
+                                "span_id": "root",
+                                "kind": "RETRIEVAL_CHUNK",
+                                "ref": "retrieval:hypothesis-retrieval",
+                                "excerpt_hash": "hypothesis-retrieval-hash",
+                                "ts": "2026-02-10T00:00:00Z",
+                            }
+                        ],
+                        "gaps": [],
+                    },
+                }
+            },
+        ],
+    )
+    engine = TraceRCAEngine(
+        inspection_api=_InspectionAPI(),
+        model_client=model_client,
+    )
+
+    report, run_record = run_engine(
+        engine=engine,
+        request=TraceRCARequest(trace_id="trace-rca-repl", project_name="phase10"),
+        run_id="run-phase10-rca-hypothesis-subcalls",
+        artifacts_root=tmp_path / "artifacts" / "investigator_runs",
+    )
+
+    assert report.primary_label == "tool_failure"
+    assert any(ref.ref == "tool:hypothesis-tool" for ref in report.evidence_refs)
+    assert len(run_record.runtime_ref.subcall_metadata) == 2
+
+
+def test_trace_rca_repl_prompt_context_excludes_policy_tools(tmp_path: Path) -> None:
+    model_client = _FakeModelClient(
+        step_outputs=[
+            {
+                "reasoning": "Finalize quickly.",
+                "code": (
+                    "SUBMIT("
+                    "primary_label='tool_failure',"
+                    "summary='done',"
+                    "confidence=0.7,"
+                    "remediation=['none'],"
+                    "evidence_refs=evidence_seed,"
+                    "gaps=[]"
+                    ")"
+                ),
+            }
+        ],
+        subquery_outputs=[],
+    )
+    engine = TraceRCAEngine(
+        inspection_api=_InspectionAPI(),
+        model_client=model_client,
+    )
+
+    _report, _run_record = run_engine(
+        engine=engine,
+        request=TraceRCARequest(trace_id="trace-rca-repl", project_name="phase10"),
+        run_id="run-phase10-rca-tool-surface",
+        artifacts_root=tmp_path / "artifacts" / "investigator_runs",
+    )
+
+    repl_requests = [
+        request
+        for request in model_client.requests
+        if str(getattr(request, "response_schema_name", "")) == "repl_runtime_step_v1"
+    ]
+    assert repl_requests
+    first_prompt = str(getattr(repl_requests[0], "user_prompt", ""))
+    assert "\"list_spans\"" in first_prompt
+    assert "\"required_evidence\"" not in first_prompt
+    assert "\"get_control\"" not in first_prompt
+    assert "\"list_controls\"" not in first_prompt
+
+
+def test_trace_rca_repl_prompt_context_includes_env_tips(tmp_path: Path) -> None:
+    model_client = _FakeModelClient(
+        step_outputs=[
+            {
+                "reasoning": "Finalize quickly.",
+                "code": (
+                    "SUBMIT("
+                    "primary_label='tool_failure',"
+                    "summary='done',"
+                    "confidence=0.7,"
+                    "remediation=['none'],"
+                    "evidence_refs=evidence_seed,"
+                    "gaps=[]"
+                    ")"
+                ),
+            }
+        ],
+        subquery_outputs=[],
+    )
+    engine = TraceRCAEngine(
+        inspection_api=_InspectionAPI(),
+        model_client=model_client,
+        repl_env_tips="Prefer branch-root evidence first; finalize with grounded trace refs.",
+    )
+
+    _report, _run_record = run_engine(
+        engine=engine,
+        request=TraceRCARequest(trace_id="trace-rca-repl", project_name="phase10"),
+        run_id="run-phase10-rca-env-tips",
+        artifacts_root=tmp_path / "artifacts" / "investigator_runs",
+    )
+
+    repl_requests = [
+        request
+        for request in model_client.requests
+        if str(getattr(request, "response_schema_name", "")) == "repl_runtime_step_v1"
+    ]
+    assert repl_requests
+    first_prompt = str(getattr(repl_requests[0], "user_prompt", ""))
+    assert "\"env_tips\"" in first_prompt
+    assert "Prefer branch-root evidence first" in first_prompt
+
+
+def test_trace_rca_tips_profile_requires_one_subquery_before_final_submit() -> None:
+    tips = resolve_trace_rca_tips_profile("trace_rca_v1")
+
+    assert "one llm_query" in tips.lower()
+    assert "before final submit" in tips.lower()

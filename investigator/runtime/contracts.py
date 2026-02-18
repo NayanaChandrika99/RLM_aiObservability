@@ -89,6 +89,7 @@ class RuntimeRef:
     state_trajectory: list[str] = field(default_factory=list)
     subcall_metadata: list[dict[str, Any]] = field(default_factory=list)
     repl_trajectory: list[dict[str, Any]] = field(default_factory=list)
+    scaffold: str | None = None
 
 
 @dataclass
@@ -127,6 +128,7 @@ class RunRecord:
     output_ref: OutputRef
     writeback_ref: WritebackRef
     error: RunError | None = None
+    scaffold: str | None = None
     schema_version: str = RUN_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:

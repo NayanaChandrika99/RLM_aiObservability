@@ -1,4 +1,6 @@
 .DS_Store
+
+# Python
 __pycache__/
 *.py[cod]
 .venv/
@@ -8,7 +10,28 @@ venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.ipynb_checkpoints/
+
+# Local tooling caches
 .uv-cache/
 .phoenix_data/
+
+# Data exports (trace datasets can be large; keep manifests and generators committed)
+datasets/**/exports/
+datasets/**/*.parquet
+
+# Runtime and experiment artifacts
+artifacts/
 artifacts/investigator_runs/
-artifacts/proof_runs/**/checkpoint.json
+artifacts/proof_runs/
+artifacts/investigator_runs*/
+artifacts/evaluation/
+artifacts/logs/
+trail-benchmark/benchmarking/results*/
+trail-benchmark/benchmarking/processed_annotations*/
+
+# Local research assets
+AgentCompass.pdf
+RLM_oservability.pptx
+image.png
+xnotes.md
