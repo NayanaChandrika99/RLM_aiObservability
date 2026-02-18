@@ -141,6 +141,77 @@ def test_recursive_loop_fails_on_fatal_tool_argument_mismatch() -> None:
     assert result.error_code == "SANDBOX_VIOLATION"
 
 
+def test_recursive_loop_collects_structured_hypothesis_results_from_subcalls() -> None:
+    registry = ToolRegistry(inspection_api=_InspectionAPI())
+    guard = SandboxGuard(allowed_tools=registry.allowed_tools)
+    loop = RecursiveLoop(tool_registry=registry, sandbox_guard=guard)
+
+    result = loop.run(
+        actions=[
+            {
+                "type": "delegate_subcall",
+                "objective": "evaluate tool hypothesis",
+                "actions": [
+                    {
+                        "type": "finalize",
+                        "output": {
+                            "label": "tool_failure",
+                            "confidence": 0.81,
+                            "supporting_facts": ["tool timeout error seen in root span"],
+                            "evidence_refs": [
+                                {
+                                    "trace_id": "trace-1",
+                                    "span_id": "root",
+                                    "kind": "TOOL_IO",
+                                    "ref": "tool:root",
+                                    "excerpt_hash": "tool-hash",
+                                    "ts": "2026-02-10T00:00:00Z",
+                                }
+                            ],
+                            "gaps": [],
+                        },
+                    }
+                ],
+            },
+            {
+                "type": "delegate_subcall",
+                "objective": "evaluate retrieval hypothesis",
+                "actions": [
+                    {
+                        "type": "finalize",
+                        "output": {
+                            "label": "retrieval_failure",
+                            "confidence": 0.33,
+                            "supporting_facts": ["retrieval evidence weaker than tool failure"],
+                            "evidence_refs": [
+                                {
+                                    "trace_id": "trace-1",
+                                    "span_id": "root",
+                                    "kind": "RETRIEVAL_CHUNK",
+                                    "ref": "retrieval:root:0:doc",
+                                    "excerpt_hash": "retrieval-hash",
+                                    "ts": "2026-02-10T00:00:00Z",
+                                }
+                            ],
+                            "gaps": [],
+                        },
+                    }
+                ],
+            },
+            {"type": "finalize", "output": {"summary": "collected hypothesis outputs"}},
+        ],
+        budget=RuntimeBudget(max_depth=2, max_iterations=30),
+    )
+
+    assert result.status == "completed"
+    assert isinstance(result.output, dict)
+    hypothesis_results = result.output.get("hypothesis_results")
+    assert isinstance(hypothesis_results, list)
+    assert len(hypothesis_results) == 2
+    assert hypothesis_results[0]["label"] == "tool_failure"
+    assert hypothesis_results[1]["label"] == "retrieval_failure"
+
+
 class _Output:
     schema_version = "1.0.0"
 

@@ -1,0 +1,57 @@
+{
+  "name": "phoenix-js",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Monorepo for Arize Phoenix Javascript Tooling",
+  "homepage": "https://github.com/Arize-ai/phoenix/tree/main/js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Arize-ai/phoenix.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Arize-ai/phoenix/issues"
+  },
+  "scripts": {
+    "prettier:check": "prettier --check .",
+    "prettier:write": "prettier --write .",
+    "type:check": "pnpm run -r type:check",
+    "test": "pnpm run -r test run",
+    "lint": "eslint",
+    "build": "pnpm run -r build",
+    "ci:version": "pnpm changeset version",
+    "ci:publish": "pnpm run -r build && pnpm publish -r --access public --provenance",
+    "docs:generate": "typedoc",
+    "docs:preview": "rimraf docs && pnpm run docs:generate && pnpx http-server ./docs -p 8080 -o",
+    "clean": "pnpm run clean:node_modules",
+    "clean:node_modules": "rimraf --glob '**/node_modules/**'"
+  },
+  "keywords": [
+    "telemetry",
+    "evaluation",
+    "llmops",
+    "observability"
+  ],
+  "author": "oss@arize.com",
+  "license": "ELv2",
+  "devDependencies": {
+    "@changesets/cli": "^2.29.8",
+    "@eslint/js": "^9.39.2",
+    "eslint": "^9.39.2",
+    "eslint-plugin-simple-import-sort": "^12.1.1",
+    "globals": "^16.5.0",
+    "jiti": "^2.6.1",
+    "pkg-pr-new": "^0.0.39",
+    "prettier": "^3.8.0",
+    "rimraf": "^5.0.10",
+    "tsc-alias": "1.8.11",
+    "typedoc": "^0.27.9",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.53.1",
+    "vitest": "^4.0.17"
+  },
+  "engines": {
+    "node": ">=10",
+    "pnpm": ">=3"
+  },
+  "packageManager": "pnpm@10.13.1"
+}

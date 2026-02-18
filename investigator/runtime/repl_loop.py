@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import re
 import time
 from typing import Any, Literal
 
@@ -51,6 +52,10 @@ def _extract_execution_error(output: str) -> str | None:
         if line.startswith("[Error]"):
             return line.removeprefix("[Error]").strip()
     return None
+
+
+def _code_includes_submit(code: str) -> bool:
+    return bool(re.search(r"\bSUBMIT\s*\(", str(code or "")))
 
 
 @dataclass
@@ -119,73 +124,13 @@ class ReplLoop:
             )
         return None
 
-    @staticmethod
-    def _build_recovery_submit_output(
-        *,
-        objective: str,
-        input_vars: dict[str, Any],
-        error_message: str,
-    ) -> dict[str, Any]:
-        allowed_labels_raw = input_vars.get("allowed_labels")
-        deterministic_hint = str(input_vars.get("deterministic_label_hint") or "").strip()
-        if isinstance(allowed_labels_raw, list):
-            allowed_labels = [str(item) for item in allowed_labels_raw if str(item)]
-            chosen_label = deterministic_hint if deterministic_hint in allowed_labels else ""
-            if not chosen_label:
-                chosen_label = allowed_labels[0] if allowed_labels else "instruction_failure"
-            return {
-                "primary_label": chosen_label,
-                "summary": (
-                    "Deterministic fallback SUBMIT applied after REPL execution error "
-                    "near iteration budget exhaustion."
-                ),
-                "confidence": 0.25,
-                "remediation": [
-                    "Retry with one focused semantic synthesis step before finalization.",
-                    "Tighten generated code to avoid undefined variables and invalid indexing.",
-                ],
-                "gaps": [str(error_message or "Unknown execution error.")],
-            }
-
-        required_evidence_raw = input_vars.get("required_evidence")
-        missing_evidence: list[str] = []
-        if isinstance(required_evidence_raw, list):
-            missing_evidence = [str(item) for item in required_evidence_raw if str(item)]
-        elif isinstance(required_evidence_raw, str) and required_evidence_raw.strip():
-            missing_evidence = [required_evidence_raw.strip()]
-
-        default_evidence = input_vars.get("default_evidence")
-        evidence_refs: list[dict[str, Any]] = []
-        if isinstance(default_evidence, dict):
-            evidence_refs = [dict(default_evidence)]
-        elif isinstance(default_evidence, list):
-            evidence_refs = [dict(item) for item in default_evidence if isinstance(item, dict)]
-
-        return {
-            "pass_fail": "insufficient_evidence",
-            "confidence": 0.25,
-            "rationale": (
-                "Deterministic fallback SUBMIT applied after REPL execution error near "
-                "iteration budget exhaustion."
-            ),
-            "covered_requirements": [],
-            "missing_evidence": missing_evidence,
-            "evidence_refs": evidence_refs,
-            "gaps": [
-                str(error_message or "Unknown execution error."),
-                f"Objective: {objective}",
-            ],
-            "remediation": (
-                "Re-run with one stabilized synthesis step and finalization after collecting "
-                "the required evidence items."
-            ),
-        }
-
     def run(
         self,
         *,
         objective: str,
         input_vars: dict[str, Any],
+        pre_filter_context: dict[str, Any] | None = None,
+        env_tips: str | None = None,
         budget: RuntimeBudget,
         depth: int = 0,
         require_subquery_for_non_trivial: bool = False,
@@ -202,8 +147,18 @@ class ReplLoop:
             model_name=self._model_name,
             temperature=self._temperature,
             max_llm_subcalls=budget.max_subcalls,
+            sandbox_timeout_sec=30,
+            sandbox_max_output_chars=8192,
         )
+        normalized_pre_filter_context: dict[str, Any] = {}
+        if isinstance(pre_filter_context, dict):
+            normalized_pre_filter_context = {
+                str(key): _json_safe(pre_filter_context[key]) for key in pre_filter_context
+            }
         runtime_vars = dict(input_vars)
+        normalized_env_tips = str(env_tips or "").strip()
+        if normalized_pre_filter_context:
+            runtime_vars["pre_filter_context"] = normalized_pre_filter_context
         runtime_vars["available_tools"] = sorted(self._tool_registry.allowed_tools)
         runtime_vars["tool_signatures"] = self._tool_registry.describe_tools()
 
@@ -216,26 +171,15 @@ class ReplLoop:
             )
             if budget_reason:
                 if usage.iterations > 0 or repl_trajectory:
-                    if repl_trajectory:
-                        prior_output = str(repl_trajectory[-1].get("output") or "").strip()
-                        recovery_line = (
-                            "[Recovery] Deterministic fallback SUBMIT applied due to "
-                            f"{budget_reason}"
-                        )
-                        repl_trajectory[-1]["output"] = (
-                            f"{prior_output}\n{recovery_line}" if prior_output else recovery_line
-                        )
-                    state_trajectory.extend(["finalizing", "completed"])
+                    state_trajectory.append("failed")
                     return ReplLoopResult(
-                        status="completed",
-                        output=self._build_recovery_submit_output(
-                            objective=objective,
-                            input_vars=runtime_vars,
-                            error_message=budget_reason,
-                        ),
+                        status="failed",
+                        output=None,
                         usage=usage,
                         state_trajectory=state_trajectory,
                         repl_trajectory=repl_trajectory,
+                        error_code="BUDGET_EXHAUSTED",
+                        error_message=budget_reason,
                     )
                 state_trajectory.append("terminated_budget")
                 return ReplLoopResult(
@@ -270,125 +214,152 @@ class ReplLoop:
             submit_deadline_iterations_remaining = 2
             if require_subquery_for_non_trivial:
                 submit_deadline_iterations_remaining = 1
-            request = StructuredGenerationRequest(
-                model_provider=str(getattr(self._model_client, "model_provider", "openai")),
-                model_name=self._model_name,
-                temperature=self._temperature,
-                system_prompt=self._prompt.prompt_text,
-                user_prompt=_build_user_prompt(
-                    {
-                        "objective": objective,
-                        "iteration": usage.iterations + 1,
-                        "budget": {
-                            "max_iterations": budget.max_iterations,
-                            "max_depth": budget.max_depth,
-                            "max_tool_calls": budget.max_tool_calls,
-                            "max_subcalls": budget.max_subcalls,
-                            "max_tokens_total": budget.max_tokens_total,
-                            "max_cost_usd": budget.max_cost_usd,
-                            "max_wall_time_sec": budget.max_wall_time_sec,
-                        },
-                        "usage": {
-                            "iterations": usage.iterations,
-                            "depth_reached": usage.depth_reached,
-                            "tool_calls": usage.tool_calls,
-                            "llm_subcalls": usage.llm_subcalls,
-                            "tokens_in": usage.tokens_in,
-                            "tokens_out": usage.tokens_out,
-                            "cost_usd": usage.cost_usd,
-                        },
-                        "remaining": {
-                            "iterations": remaining_iterations,
-                            "tool_calls": remaining_tool_calls,
-                            "subcalls": remaining_subcalls,
-                            "tokens_total": remaining_tokens_total,
-                            "cost_usd": remaining_cost_usd,
-                        },
-                        "submit_deadline_iterations_remaining": submit_deadline_iterations_remaining,
-                        "allowed_tools": sorted(self._tool_registry.allowed_tools),
-                        "tool_signatures": runtime_vars.get("tool_signatures") or {},
-                        "variables": sorted(interpreter.variables.keys()),
-                        "history": repl_history,
-                    }
-                ),
-                response_schema_name=self._prompt.prompt_id,
-                response_schema=self._prompt.response_schema,
-            )
+            must_submit_now = remaining_iterations <= submit_deadline_iterations_remaining
+            submit_enforcement: dict[str, Any] | None = None
+            planning_attempt_count = 0
+            reasoning = ""
+            code = ""
+            while True:
+                prompt_payload: dict[str, Any] = {
+                    "objective": objective,
+                    "iteration": usage.iterations + 1,
+                    "require_subquery_for_non_trivial": bool(require_subquery_for_non_trivial),
+                    "budget": {
+                        "max_iterations": budget.max_iterations,
+                        "max_depth": budget.max_depth,
+                        "max_tool_calls": budget.max_tool_calls,
+                        "max_subcalls": budget.max_subcalls,
+                        "max_tokens_total": budget.max_tokens_total,
+                        "max_cost_usd": budget.max_cost_usd,
+                        "max_wall_time_sec": budget.max_wall_time_sec,
+                    },
+                    "usage": {
+                        "iterations": usage.iterations,
+                        "depth_reached": usage.depth_reached,
+                        "tool_calls": usage.tool_calls,
+                        "llm_subcalls": usage.llm_subcalls,
+                        "tokens_in": usage.tokens_in,
+                        "tokens_out": usage.tokens_out,
+                        "cost_usd": usage.cost_usd,
+                    },
+                    "remaining": {
+                        "iterations": remaining_iterations,
+                        "tool_calls": remaining_tool_calls,
+                        "subcalls": remaining_subcalls,
+                        "tokens_total": remaining_tokens_total,
+                        "cost_usd": remaining_cost_usd,
+                    },
+                    "submit_deadline_iterations_remaining": submit_deadline_iterations_remaining,
+                    "allowed_tools": sorted(self._tool_registry.allowed_tools),
+                    "tool_signatures": runtime_vars.get("tool_signatures") or {},
+                    "pre_filter_context": normalized_pre_filter_context,
+                    "variables": sorted(interpreter.variables.keys()),
+                    "history": repl_history,
+                }
+                if submit_enforcement is not None:
+                    prompt_payload["submit_enforcement"] = submit_enforcement
+                if normalized_env_tips:
+                    prompt_payload["env_tips"] = normalized_env_tips
 
-            try:
-                plan_result = run_structured_generation_loop(
-                    client=self._model_client,
-                    request=request,
-                    max_attempts=2,
-                )
-            except ModelOutputInvalidError as exc:
-                state_trajectory.append("failed")
-                return ReplLoopResult(
-                    status="failed",
-                    output=None,
-                    usage=usage,
-                    state_trajectory=state_trajectory,
-                    repl_trajectory=repl_trajectory,
-                    error_code="MODEL_OUTPUT_INVALID",
-                    error_message=str(exc),
+                request = StructuredGenerationRequest(
+                    model_provider=str(getattr(self._model_client, "model_provider", "openai")),
+                    model_name=self._model_name,
+                    temperature=self._temperature,
+                    system_prompt=self._prompt.prompt_text,
+                    user_prompt=_build_user_prompt(prompt_payload),
+                    response_schema_name=self._prompt.prompt_id,
+                    response_schema=self._prompt.response_schema,
                 )
 
-            usage.tokens_in += int(plan_result.usage.tokens_in)
-            usage.tokens_out += int(plan_result.usage.tokens_out)
-            usage.cost_usd += float(plan_result.usage.cost_usd)
-
-            planning_budget_reason = self._budget_reason(
-                budget=budget,
-                usage=usage,
-                depth=depth,
-                start_monotonic=started,
-            )
-            if planning_budget_reason:
-                if usage.iterations > 0 or repl_trajectory:
-                    if repl_trajectory:
-                        prior_output = str(repl_trajectory[-1].get("output") or "").strip()
-                        recovery_line = (
-                            "[Recovery] Deterministic fallback SUBMIT applied due to "
-                            f"{planning_budget_reason}"
-                        )
-                        repl_trajectory[-1]["output"] = (
-                            f"{prior_output}\n{recovery_line}" if prior_output else recovery_line
-                        )
-                    state_trajectory.extend(["finalizing", "completed"])
+                try:
+                    plan_result = run_structured_generation_loop(
+                        client=self._model_client,
+                        request=request,
+                        max_attempts=2,
+                    )
+                except ModelOutputInvalidError as exc:
+                    state_trajectory.append("failed")
                     return ReplLoopResult(
-                        status="completed",
-                        output=self._build_recovery_submit_output(
-                            objective=objective,
-                            input_vars=runtime_vars,
-                            error_message=planning_budget_reason,
-                        ),
+                        status="failed",
+                        output=None,
                         usage=usage,
                         state_trajectory=state_trajectory,
                         repl_trajectory=repl_trajectory,
+                        error_code="MODEL_OUTPUT_INVALID",
+                        error_message=str(exc),
                     )
-                state_trajectory.append("terminated_budget")
-                return ReplLoopResult(
-                    status="terminated_budget",
-                    output=None,
-                    usage=usage,
-                    state_trajectory=state_trajectory,
-                    repl_trajectory=repl_trajectory,
-                    budget_reason=planning_budget_reason,
-                )
 
-            reasoning = str(plan_result.output.get("reasoning") or "").strip()
-            code = str(plan_result.output.get("code") or "")
-            if not code.strip():
-                state_trajectory.append("failed")
-                return ReplLoopResult(
-                    status="failed",
-                    output=None,
+                usage.tokens_in += int(plan_result.usage.tokens_in)
+                usage.tokens_out += int(plan_result.usage.tokens_out)
+                usage.cost_usd += float(plan_result.usage.cost_usd)
+
+                planning_budget_reason = self._budget_reason(
+                    budget=budget,
                     usage=usage,
-                    state_trajectory=state_trajectory,
-                    repl_trajectory=repl_trajectory,
-                    error_code="MODEL_OUTPUT_INVALID",
-                    error_message="REPL step output must include non-empty code.",
+                    depth=depth,
+                    start_monotonic=started,
                 )
+                if planning_budget_reason:
+                    if usage.iterations > 0 or repl_trajectory:
+                        state_trajectory.append("failed")
+                        return ReplLoopResult(
+                            status="failed",
+                            output=None,
+                            usage=usage,
+                            state_trajectory=state_trajectory,
+                            repl_trajectory=repl_trajectory,
+                            error_code="BUDGET_EXHAUSTED",
+                            error_message=planning_budget_reason,
+                        )
+                    state_trajectory.append("terminated_budget")
+                    return ReplLoopResult(
+                        status="terminated_budget",
+                        output=None,
+                        usage=usage,
+                        state_trajectory=state_trajectory,
+                        repl_trajectory=repl_trajectory,
+                        budget_reason=planning_budget_reason,
+                    )
+
+                reasoning = str(plan_result.output.get("reasoning") or "").strip()
+                code = str(plan_result.output.get("code") or "")
+                if not code.strip():
+                    state_trajectory.append("failed")
+                    return ReplLoopResult(
+                        status="failed",
+                        output=None,
+                        usage=usage,
+                        state_trajectory=state_trajectory,
+                        repl_trajectory=repl_trajectory,
+                        error_code="MODEL_OUTPUT_INVALID",
+                        error_message="REPL step output must include non-empty code.",
+                    )
+                if must_submit_now and not _code_includes_submit(code):
+                    planning_attempt_count += 1
+                    if planning_attempt_count >= 2:
+                        state_trajectory.append("failed")
+                        return ReplLoopResult(
+                            status="failed",
+                            output=None,
+                            usage=usage,
+                            state_trajectory=state_trajectory,
+                            repl_trajectory=repl_trajectory,
+                            error_code="MODEL_OUTPUT_INVALID",
+                            error_message=(
+                                "Submit deadline step must include SUBMIT(...). "
+                                "Regeneration still omitted SUBMIT."
+                            ),
+                        )
+                    submit_enforcement = {
+                        "required": True,
+                        "reason": "submit deadline reached and previous code omitted SUBMIT(...).",
+                        "previous_reasoning": reasoning,
+                        "previous_code": code,
+                        "instruction": "Regenerate one snippet that calls SUBMIT(...) in this step.",
+                    }
+                    state_trajectory.append("planning")
+                    continue
+                break
 
             state_trajectory.append("acting")
             try:
@@ -439,35 +410,19 @@ class ReplLoop:
                 exec_result.submitted_output is None
                 and remaining_iterations_after_step <= 0
             ):
-                if repl_trajectory:
-                    prior_output = str(repl_trajectory[-1].get("output") or "").strip()
-                    recovery_reason = (
-                        execution_error
-                        if execution_error
-                        else "submit deadline reached without SUBMIT."
-                    )
-                    recovery_line = (
-                        "[Recovery] Deterministic fallback SUBMIT applied due to "
-                        f"{recovery_reason}"
-                    )
-                    repl_trajectory[-1]["output"] = (
-                        f"{prior_output}\n{recovery_line}" if prior_output else recovery_line
-                    )
-                state_trajectory.extend(["finalizing", "completed"])
+                state_trajectory.append("failed")
                 return ReplLoopResult(
-                    status="completed",
-                    output=self._build_recovery_submit_output(
-                        objective=objective,
-                        input_vars=runtime_vars,
-                        error_message=(
-                            execution_error
-                            if execution_error
-                            else "submit deadline reached without SUBMIT."
-                        ),
-                    ),
+                    status="failed",
+                    output=None,
                     usage=usage,
                     state_trajectory=state_trajectory,
                     repl_trajectory=repl_trajectory,
+                    error_code="SUBMIT_DEADLINE_REACHED",
+                    error_message=(
+                        execution_error
+                        if execution_error
+                        else "submit deadline reached without SUBMIT."
+                    ),
                 )
 
             if isinstance(exec_result.submitted_output, dict):

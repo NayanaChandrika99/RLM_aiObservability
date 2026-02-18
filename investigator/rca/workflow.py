@@ -46,6 +46,7 @@ def run_trace_rca_workflow(
     dataset_ref: DatasetRef | None = None,
     artifacts_root: str | Path = "artifacts/investigator_runs",
     writeback_client: Any | None = None,
+    scaffold: str | None = None,
 ) -> tuple[Any, RunRecord]:
     active_engine = engine or TraceRCAEngine()
     report, run_record = run_engine(
@@ -56,6 +57,9 @@ def run_trace_rca_workflow(
         dataset_ref=dataset_ref,
         artifacts_root=artifacts_root,
     )
+    if scaffold is not None:
+        run_record.scaffold = scaffold
+        run_record.runtime_ref.scaffold = scaffold
     try:
         primary_annotator_kind = _primary_annotator_kind(engine=active_engine, run_record=run_record)
         writeback_result = write_rca_to_phoenix(

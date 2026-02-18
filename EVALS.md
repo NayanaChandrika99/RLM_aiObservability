@@ -1,0 +1,1 @@
+This is critical for an observability/governance project. Define: datasets, seeded failures, RCA taxonomy, dossier schema, scoring metrics, and regression procedure. Arize’s Phoenix content explicitly emphasizes reproducible evaluator experiments and iterating evaluators into dependable tools.

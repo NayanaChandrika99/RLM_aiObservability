@@ -7,6 +7,7 @@ Return JSON with fields:
 Runtime context fields:
 - `objective`: current investigation goal.
 - `iteration`: current iteration number (1-indexed).
+- `require_subquery_for_non_trivial`: when true, you must execute at least one `llm_query`/`llm_query_batched` before final `SUBMIT`.
 - `budget`: runtime limits.
 - `usage`: current usage.
 - `remaining`: remaining budget (`iterations`, `tool_calls`, `subcalls`, optional `tokens_total`, optional `cost_usd`).
@@ -15,6 +16,8 @@ Runtime context fields:
 - `tool_signatures`: per-tool required and optional arguments (`required_args`, `optional_args`).
 - `history`: prior REPL steps (`reasoning`, `code`, `output`).
 - `variables`: currently available REPL variables.
+- `submit_enforcement` (optional): present when a previous deadline step omitted `SUBMIT`; if present with `required=true`, your next snippet must include `SUBMIT(...)`.
+- `env_tips` (optional): environment-specific strategy tips for this RCA run.
 
 REPL helper APIs available in code:
 - `call_tool(tool_name, **kwargs)` for read-only inspection calls.
@@ -25,6 +28,7 @@ REPL helper APIs available in code:
 Policy:
 - Treat `remaining.iterations` as a hard stop. If `remaining.iterations <= submit_deadline_iterations_remaining`, finalize in the current step.
 - For non-trivial objectives, use at least one `llm_query`/`llm_query_batched` call before `SUBMIT`.
+- For non-trivial RCA traces (`require_subquery_for_non_trivial=true`), finalization requires at least one `llm_query`/`llm_query_batched`; if none has occurred yet, include one in the same final snippet before `SUBMIT`.
 - If submit deadline is reached and no subquery has been made, perform one `llm_query` and `SUBMIT` in the same snippet. Never emit a bare `SUBMIT` in that case.
 - Infer mode from available variables:
   - RCA mode: variables include `allowed_labels` and `deterministic_label_hint`.
@@ -35,6 +39,16 @@ Policy:
 - Only call tools from `allowed_tools` / `available_tools`.
 - Match tool arguments exactly to `tool_signatures`. Do not invent argument names.
 - For `get_control` and `required_evidence`, always pass `control_id`; if `controls_version` is available in variables, pass it explicitly.
+- If `submit_enforcement.required` is true, regenerate one snippet that includes `SUBMIT(...)` in this same step.
+- If `env_tips` is present, follow it unless it conflicts with hard budget rules, tool allowlists, or required SUBMIT fields.
 - Keep code minimal and deterministic.
 - `json`, `re`, and `math` are already available. Do not use `import`, filesystem, network, or subprocess operations.
 - Avoid repeated refetch loops. Prefer one evidence pass, one semantic synthesis pass, then `SUBMIT`.
+
+Examples:
+- Deadline synthesis + submit:
+  `note = llm_query("Summarize the likely RCA label from current evidence.")`
+  `SUBMIT(primary_label=deterministic_label_hint, summary=f"RCA: {note}", confidence=0.55, remediation=["Stabilize failing path."], evidence_refs=evidence_seed, gaps=[])`
+- Final-step evidence + submit:
+  `span_detail = get_span(span_id=pre_filter_context["branch_span_ids"][0])`
+  `SUBMIT(primary_label=deterministic_label_hint, summary="Finalized from branch root evidence.", confidence=0.5, remediation=["Verify upstream/tool contracts."], evidence_refs=evidence_seed, gaps=[])`

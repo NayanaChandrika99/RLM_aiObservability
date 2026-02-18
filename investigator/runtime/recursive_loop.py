@@ -688,6 +688,9 @@ class RecursiveLoop:
                 if isinstance(child_result.output, dict):
                     child_evidence = child_result.output.get("evidence_refs")
                     child_gaps = child_result.output.get("gaps")
+                    child_label = str(child_result.output.get("label") or "").strip()
+                    child_confidence = child_result.output.get("confidence")
+                    child_supporting_facts = child_result.output.get("supporting_facts")
                     if isinstance(child_evidence, list):
                         merged = draft_output.setdefault("evidence_refs", [])
                         if isinstance(merged, list):
@@ -707,6 +710,39 @@ class RecursiveLoop:
                                 if not isinstance(gap, str) or not gap.strip():
                                     continue
                                 merged_gaps.append(f"subcall:{subcall_id}:{gap}")
+                    if child_label and isinstance(child_confidence, (int, float)):
+                        normalized_supporting_facts: list[str] = []
+                        if isinstance(child_supporting_facts, list):
+                            normalized_supporting_facts = [
+                                str(item).strip()
+                                for item in child_supporting_facts
+                                if str(item).strip()
+                            ]
+                        elif isinstance(child_supporting_facts, str) and child_supporting_facts.strip():
+                            normalized_supporting_facts = [child_supporting_facts.strip()]
+                        normalized_evidence_refs: list[dict[str, Any]] = []
+                        if isinstance(child_evidence, list):
+                            normalized_evidence_refs = [
+                                dict(item) for item in child_evidence if isinstance(item, dict)
+                            ]
+                        normalized_gaps: list[str] = []
+                        if isinstance(child_gaps, list):
+                            normalized_gaps = [
+                                str(item).strip() for item in child_gaps if str(item).strip()
+                            ]
+                        hypothesis_results = draft_output.setdefault("hypothesis_results", [])
+                        if isinstance(hypothesis_results, list):
+                            hypothesis_results.append(
+                                {
+                                    "label": child_label,
+                                    "confidence": max(0.0, min(1.0, float(child_confidence))),
+                                    "supporting_facts": normalized_supporting_facts,
+                                    "evidence_refs": normalized_evidence_refs,
+                                    "gaps": normalized_gaps,
+                                    "status": child_status,
+                                    "objective": subcall_objective,
+                                }
+                            )
 
                 if child_result.status == "terminated_budget":
                     machine.transition("terminated_budget")
