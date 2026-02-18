@@ -33,6 +33,9 @@ FAULT_PROFILE_TO_LABEL = {
     "profile_instruction_failure": "instruction_failure",
     "profile_upstream_dependency_failure": "upstream_dependency_failure",
     "profile_data_schema_mismatch": "data_schema_mismatch",
+    "profile_multi_tool_failure": "tool_failure",
+    "profile_cascading_retrieval_failure": "retrieval_failure",
+    "profile_timeout_upstream": "upstream_dependency_failure",
 }
 
 
@@ -259,6 +262,12 @@ def _profile_documents(fault_profile: str) -> list[str]:
             "Beverage inventory levels by region and depot.",
             "Employee travel reimbursement policy appendix.",
         ]
+    if fault_profile == "profile_cascading_retrieval_failure":
+        return [
+            "Annual budget planning guidelines for department heads.",
+            "Office supply procurement procedures and vendor contacts.",
+            "Parking lot assignment policy for building C employees.",
+        ]
     return base_docs
 
 
@@ -270,6 +279,8 @@ def _profile_query(fault_profile: str) -> str:
         )
     if fault_profile == "profile_data_schema_mismatch":
         return "Return the Track table count as a plain sentence."
+    if fault_profile == "profile_cascading_retrieval_failure":
+        return "How many tracks are in the Track table? Use the retrieved documents."
     return "How many tracks are in the Track table?"
 
 
@@ -306,6 +317,35 @@ def _inject_profile_fault_markers(*, fault_profile: str, tracer: Any, response_t
             span.set_attribute("phase1.step", "tool.parse")
             span.set_attribute("phase1.response_preview", response_text[:120])
             span.set_status(Status(StatusCode.ERROR, "schema mismatch"))
+        return
+
+    if fault_profile == "profile_multi_tool_failure":
+        with tracer.start_as_current_span("tool.call") as span:
+            span.set_attribute("phase1.step", "tool.call")
+            span.set_attribute("phase1.tool_seq", 1)
+            span.set_status(Status(StatusCode.ERROR, "first tool call failed"))
+        with tracer.start_as_current_span("tool.call") as span:
+            span.set_attribute("phase1.step", "tool.call")
+            span.set_attribute("phase1.tool_seq", 2)
+            span.set_status(Status(StatusCode.ERROR, "second tool call also failed"))
+        return
+
+    if fault_profile == "profile_cascading_retrieval_failure":
+        with tracer.start_as_current_span("retriever.fetch") as span:
+            span.set_attribute("phase1.step", "retriever.fetch")
+            span.set_attribute("phase1.retrieval.relevance", 0.05)
+            span.set_status(Status(StatusCode.OK))
+        with tracer.start_as_current_span("llm.generate") as span:
+            span.set_attribute("phase1.step", "llm.generate")
+            span.set_attribute("phase1.hallucination_risk", "high")
+            span.set_status(Status(StatusCode.ERROR, "hallucinated from irrelevant retrieval"))
+        return
+
+    if fault_profile == "profile_timeout_upstream":
+        with tracer.start_as_current_span("dependency.http") as span:
+            span.set_attribute("phase1.step", "dependency.http")
+            span.set_attribute("phase1.timeout_ms", 30000)
+            span.set_status(Status(StatusCode.ERROR, "upstream timeout after 30s"))
 
 
 def _run_live_llamaindex_fault(

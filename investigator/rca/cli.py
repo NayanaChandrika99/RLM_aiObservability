@@ -10,7 +10,13 @@ import sys
 from typing import Any
 
 from investigator.inspection_api import ParquetInspectionAPI, PhoenixInspectionAPI
-from investigator.rca.engine import TraceRCAEngine, TraceRCARequest
+from investigator.rca.engine import (
+    TraceRCAEngine,
+    TraceRCARequest,
+    list_trace_rca_tips_profiles,
+    resolve_trace_rca_tips_profile,
+)
+from investigator.rca.scaffolds import get_scaffold_preset, list_scaffold_names
 from investigator.rca.workflow import run_trace_rca_workflow
 from investigator.runtime.contracts import DatasetRef, RuntimeBudget
 
@@ -34,6 +40,18 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-depth", type=int, default=2)
     parser.add_argument("--max-wall-time", type=int, default=180)
     parser.add_argument("--model", default="gpt-4o-mini")
+    parser.add_argument(
+        "--tips-profile",
+        default="none",
+        choices=list_trace_rca_tips_profiles(),
+        help="Optional REPL environment-tips profile for RCA runtime prompts.",
+    )
+    parser.add_argument(
+        "--scaffold",
+        default=None,
+        choices=list_scaffold_names(),
+        help="Scaffold preset (overrides --tips-profile when set).",
+    )
     parser.add_argument("--no-writeback", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     return parser
@@ -54,13 +72,32 @@ def _build_inspection_api(args: argparse.Namespace) -> Any:
     return PhoenixInspectionAPI(endpoint=args.phoenix_endpoint)
 
 
-def _build_engine(*, inspection_api: Any, model_name: str) -> TraceRCAEngine:
-    engine = TraceRCAEngine(
-        inspection_api=inspection_api,
-        use_llm_judgment=True,
-        use_repl_runtime=True,
-        fallback_on_llm_error=True,
-    )
+def _build_engine(
+    *,
+    inspection_api: Any,
+    model_name: str,
+    tips_profile: str = "none",
+    scaffold_name: str | None = None,
+) -> TraceRCAEngine:
+    if scaffold_name is not None:
+        preset = get_scaffold_preset(scaffold_name)
+        repl_env_tips = resolve_trace_rca_tips_profile(preset.tips_profile)
+        engine = TraceRCAEngine(
+            inspection_api=inspection_api,
+            use_llm_judgment=preset.use_llm_judgment,
+            use_repl_runtime=preset.use_repl_runtime,
+            fallback_on_llm_error=preset.fallback_on_llm_error,
+            repl_env_tips=repl_env_tips,
+        )
+    else:
+        repl_env_tips = resolve_trace_rca_tips_profile(tips_profile)
+        engine = TraceRCAEngine(
+            inspection_api=inspection_api,
+            use_llm_judgment=True,
+            use_repl_runtime=True,
+            fallback_on_llm_error=False,
+            repl_env_tips=repl_env_tips,
+        )
     engine.model_name = str(model_name)
     return engine
 
@@ -77,7 +114,13 @@ def _load_manifest(path: str | Path) -> dict[str, Any]:
 
 def _print_repl_trajectory(run_record: Any) -> None:
     runtime_ref = getattr(run_record, "runtime_ref", None)
-    trajectory = getattr(runtime_ref, "repl_trajectory", []) if runtime_ref is not None else []
+    if runtime_ref is None and isinstance(run_record, dict):
+        runtime_ref = run_record.get("runtime_ref")
+    trajectory: Any = []
+    if isinstance(runtime_ref, dict):
+        trajectory = runtime_ref.get("repl_trajectory", [])
+    elif runtime_ref is not None:
+        trajectory = getattr(runtime_ref, "repl_trajectory", [])
     if not isinstance(trajectory, list) or not trajectory:
         return
     print(f"REPL trajectory ({len(trajectory)} step(s)):", file=sys.stderr)
@@ -85,8 +128,11 @@ def _print_repl_trajectory(run_record: Any) -> None:
         if not isinstance(step, dict):
             continue
         reasoning = str(step.get("reasoning") or "").strip()
+        code = str(step.get("code") or "").strip()
         output = str(step.get("output") or "").strip()
         print(f"[step {index}] reasoning={reasoning}", file=sys.stderr)
+        if code:
+            print(f"[step {index}] code={code}", file=sys.stderr)
         if output:
             print(f"[step {index}] output={output}", file=sys.stderr)
 
@@ -100,6 +146,7 @@ def _run_one_trace(
     artifacts_root: str | Path,
     writeback_client: Any | None,
     verbose: bool,
+    scaffold: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], int]:
     try:
         report, run_record = run_trace_rca_workflow(
@@ -109,9 +156,12 @@ def _run_one_trace(
             dataset_ref=dataset_ref,
             artifacts_root=artifacts_root,
             writeback_client=writeback_client,
+            scaffold=scaffold,
         )
     except RuntimeError as exc:
         payload = exc.args[0] if exc.args and isinstance(exc.args[0], dict) else {"error": str(exc)}
+        if verbose:
+            _print_repl_trajectory(payload)
         return {}, payload, 1
 
     if verbose:
@@ -140,7 +190,14 @@ def _print_batch_table(rows: list[dict[str, Any]]) -> None:
 
 def _run_single(args: argparse.Namespace) -> int:
     inspection_api = _build_inspection_api(args)
-    engine = _build_engine(inspection_api=inspection_api, model_name=str(args.model))
+    scaffold_name = getattr(args, "scaffold", None)
+    tips_profile = str(args.tips_profile) if scaffold_name is None else "none"
+    engine = _build_engine(
+        inspection_api=inspection_api,
+        model_name=str(args.model),
+        tips_profile=tips_profile,
+        scaffold_name=scaffold_name,
+    )
     budget = _build_budget(args)
     writeback_client = _NoWritebackClient() if args.no_writeback else None
     report_payload, run_payload, exit_code = _run_one_trace(
@@ -151,6 +208,7 @@ def _run_single(args: argparse.Namespace) -> int:
         artifacts_root=args.output_dir,
         writeback_client=writeback_client,
         verbose=bool(args.verbose),
+        scaffold=scaffold_name,
     )
     if report_payload:
         print(json.dumps(report_payload, indent=2, sort_keys=True))
@@ -165,7 +223,14 @@ def _run_batch(args: argparse.Namespace) -> int:
     if args.parquet and hasattr(inspection_api, "attach_manifest_trace_ids"):
         inspection_api.attach_manifest_trace_ids(manifest_path=str(args.manifest))
         manifest_payload = _load_manifest(str(args.manifest))
-    engine = _build_engine(inspection_api=inspection_api, model_name=str(args.model))
+    scaffold_name = getattr(args, "scaffold", None)
+    tips_profile = str(args.tips_profile) if scaffold_name is None else "none"
+    engine = _build_engine(
+        inspection_api=inspection_api,
+        model_name=str(args.model),
+        tips_profile=tips_profile,
+        scaffold_name=scaffold_name,
+    )
     budget = _build_budget(args)
     writeback_client = _NoWritebackClient() if args.no_writeback else None
     dataset_id_raw = manifest_payload.get("dataset_id")
@@ -188,6 +253,7 @@ def _run_batch(args: argparse.Namespace) -> int:
             artifacts_root=args.output_dir,
             writeback_client=writeback_client,
             verbose=bool(args.verbose),
+            scaffold=scaffold_name,
         )
         highest_exit_code = max(highest_exit_code, exit_code)
         predicted_label = str(report_payload.get("primary_label") or "")

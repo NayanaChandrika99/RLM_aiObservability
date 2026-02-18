@@ -161,8 +161,8 @@ def test_trace_rca_detects_upstream_dependency_failure() -> None:
             span_id="s-upstream",
             trace_id="trace-2",
             parent_id=None,
-            name="tool.http",
-            span_kind="TOOL",
+            name="dependency.http",
+            span_kind="CHAIN",
             status_code="ERROR",
             status_message="upstream timeout 503",
             latency_ms=1500.0,
@@ -172,6 +172,63 @@ def test_trace_rca_detects_upstream_dependency_failure() -> None:
     engine = TraceRCAEngine(inspection_api=_FakeInspectionAPI(spans=spans))
     report = engine.run(TraceRCARequest(trace_id="trace-2", project_name="phase3"))
     assert report.primary_label == "upstream_dependency_failure"
+
+
+def test_trace_rca_prioritizes_tool_failure_over_timeout_text_for_tool_spans() -> None:
+    spans = [
+        _Span(
+            span_id="s-tool-timeout",
+            trace_id="trace-2b",
+            parent_id=None,
+            name="tool.call",
+            span_kind="TOOL",
+            status_code="ERROR",
+            status_message="upstream timeout 503 while calling dependency",
+            latency_ms=800.0,
+            events=[],
+        )
+    ]
+    engine = TraceRCAEngine(inspection_api=_FakeInspectionAPI(spans=spans))
+    report = engine.run(TraceRCARequest(trace_id="trace-2b", project_name="phase3"))
+    assert report.primary_label == "tool_failure"
+
+
+def test_trace_rca_detects_tool_failure_from_unknown_kind_tool_name_prefix() -> None:
+    spans = [
+        _Span(
+            span_id="s-tool-timeout-unknown",
+            trace_id="trace-2c",
+            parent_id=None,
+            name="tool.call",
+            span_kind="UNKNOWN",
+            status_code="ERROR",
+            status_message="forced tool timeout",
+            latency_ms=700.0,
+            events=[],
+        )
+    ]
+    engine = TraceRCAEngine(inspection_api=_FakeInspectionAPI(spans=spans))
+    report = engine.run(TraceRCARequest(trace_id="trace-2c", project_name="phase3"))
+    assert report.primary_label == "tool_failure"
+
+
+def test_trace_rca_prioritizes_schema_mismatch_over_tool_failure_for_tool_parse_errors() -> None:
+    spans = [
+        _Span(
+            span_id="s-tool-parse-schema",
+            trace_id="trace-2d",
+            parent_id=None,
+            name="tool.parse",
+            span_kind="UNKNOWN",
+            status_code="ERROR",
+            status_message="schema mismatch while parsing tool output",
+            latency_ms=650.0,
+            events=[],
+        )
+    ]
+    engine = TraceRCAEngine(inspection_api=_FakeInspectionAPI(spans=spans))
+    report = engine.run(TraceRCARequest(trace_id="trace-2d", project_name="phase3"))
+    assert report.primary_label == "data_schema_mismatch"
 
 
 def test_trace_rca_detects_retrieval_failure_from_empty_chunks() -> None:

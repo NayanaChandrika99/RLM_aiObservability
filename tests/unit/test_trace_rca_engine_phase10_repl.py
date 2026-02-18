@@ -7,7 +7,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from investigator.rca.engine import TraceRCAEngine, TraceRCARequest
+from investigator.rca.engine import (
+    TraceRCAEngine,
+    TraceRCARequest,
+    resolve_trace_rca_tips_profile,
+)
 from investigator.runtime.contracts import RuntimeBudget
 from investigator.runtime.llm_client import StructuredGenerationResult, StructuredGenerationUsage
 from investigator.runtime.runner import run_engine
@@ -79,9 +83,11 @@ class _FakeModelClient:
         self._subquery_outputs = list(subquery_outputs)
         self._recursive_outputs = list(recursive_outputs or [])
         self.calls = 0
+        self.requests: list[Any] = []
 
     def generate_structured(self, request):  # noqa: ANN001, ANN201
         self.calls += 1
+        self.requests.append(request)
         schema_name = str(getattr(request, "response_schema_name", ""))
         if schema_name == "repl_runtime_step_v1":
             payload = self._step_outputs.pop(0)
@@ -166,10 +172,10 @@ def test_trace_rca_repl_tightens_per_trace_budget() -> None:
 
     tightened = TraceRCAEngine._tighten_repl_trace_budget(budget)
 
-    assert tightened.max_iterations == 1
+    assert tightened.max_iterations == 5
     assert tightened.max_depth == 3
     assert tightened.max_tool_calls == 6
-    assert tightened.max_subcalls == 2
+    assert tightened.max_subcalls == 5
     assert tightened.max_tokens_total == 18000
     assert tightened.max_cost_usd == 0.12
     assert tightened.max_wall_time_sec == 45
@@ -321,3 +327,97 @@ def test_trace_rca_repl_hypothesis_subcalls_select_best_hypothesis(tmp_path: Pat
     assert report.primary_label == "tool_failure"
     assert any(ref.ref == "tool:hypothesis-tool" for ref in report.evidence_refs)
     assert len(run_record.runtime_ref.subcall_metadata) == 2
+
+
+def test_trace_rca_repl_prompt_context_excludes_policy_tools(tmp_path: Path) -> None:
+    model_client = _FakeModelClient(
+        step_outputs=[
+            {
+                "reasoning": "Finalize quickly.",
+                "code": (
+                    "SUBMIT("
+                    "primary_label='tool_failure',"
+                    "summary='done',"
+                    "confidence=0.7,"
+                    "remediation=['none'],"
+                    "evidence_refs=evidence_seed,"
+                    "gaps=[]"
+                    ")"
+                ),
+            }
+        ],
+        subquery_outputs=[],
+    )
+    engine = TraceRCAEngine(
+        inspection_api=_InspectionAPI(),
+        model_client=model_client,
+    )
+
+    _report, _run_record = run_engine(
+        engine=engine,
+        request=TraceRCARequest(trace_id="trace-rca-repl", project_name="phase10"),
+        run_id="run-phase10-rca-tool-surface",
+        artifacts_root=tmp_path / "artifacts" / "investigator_runs",
+    )
+
+    repl_requests = [
+        request
+        for request in model_client.requests
+        if str(getattr(request, "response_schema_name", "")) == "repl_runtime_step_v1"
+    ]
+    assert repl_requests
+    first_prompt = str(getattr(repl_requests[0], "user_prompt", ""))
+    assert "\"list_spans\"" in first_prompt
+    assert "\"required_evidence\"" not in first_prompt
+    assert "\"get_control\"" not in first_prompt
+    assert "\"list_controls\"" not in first_prompt
+
+
+def test_trace_rca_repl_prompt_context_includes_env_tips(tmp_path: Path) -> None:
+    model_client = _FakeModelClient(
+        step_outputs=[
+            {
+                "reasoning": "Finalize quickly.",
+                "code": (
+                    "SUBMIT("
+                    "primary_label='tool_failure',"
+                    "summary='done',"
+                    "confidence=0.7,"
+                    "remediation=['none'],"
+                    "evidence_refs=evidence_seed,"
+                    "gaps=[]"
+                    ")"
+                ),
+            }
+        ],
+        subquery_outputs=[],
+    )
+    engine = TraceRCAEngine(
+        inspection_api=_InspectionAPI(),
+        model_client=model_client,
+        repl_env_tips="Prefer branch-root evidence first; finalize with grounded trace refs.",
+    )
+
+    _report, _run_record = run_engine(
+        engine=engine,
+        request=TraceRCARequest(trace_id="trace-rca-repl", project_name="phase10"),
+        run_id="run-phase10-rca-env-tips",
+        artifacts_root=tmp_path / "artifacts" / "investigator_runs",
+    )
+
+    repl_requests = [
+        request
+        for request in model_client.requests
+        if str(getattr(request, "response_schema_name", "")) == "repl_runtime_step_v1"
+    ]
+    assert repl_requests
+    first_prompt = str(getattr(repl_requests[0], "user_prompt", ""))
+    assert "\"env_tips\"" in first_prompt
+    assert "Prefer branch-root evidence first" in first_prompt
+
+
+def test_trace_rca_tips_profile_requires_one_subquery_before_final_submit() -> None:
+    tips = resolve_trace_rca_tips_profile("trace_rca_v1")
+
+    assert "one llm_query" in tips.lower()
+    assert "before final submit" in tips.lower()

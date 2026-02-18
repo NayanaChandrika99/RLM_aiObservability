@@ -403,6 +403,102 @@ def format_evaluation_report(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def evaluate_rca_runs_comparative(
+    *,
+    manifest_path: str | Path,
+    scaffold_runs: dict[str, str | Path],
+) -> dict[str, Any]:
+    per_scaffold: dict[str, dict[str, Any]] = {}
+    for scaffold_name, runs_dir in scaffold_runs.items():
+        per_scaffold[scaffold_name] = evaluate_rca_runs(
+            manifest_path=manifest_path,
+            runs_dir=runs_dir,
+        )
+
+    heuristic_report = per_scaffold.get("heuristic")
+    heuristic_accuracy = 0.0
+    heuristic_cost = 0.0
+    if heuristic_report is not None:
+        heuristic_accuracy = _safe_float(
+            (heuristic_report.get("metrics") or {}).get("top1_accuracy", {}).get("score")
+        )
+        heuristic_cost = _safe_float(
+            (heuristic_report.get("metrics") or {}).get("runtime", {}).get("cost_total_usd")
+        )
+
+    scaffold_summaries: dict[str, dict[str, Any]] = {}
+    for scaffold_name, report in per_scaffold.items():
+        metrics = report.get("metrics") or {}
+        top1 = metrics.get("top1_accuracy") or {}
+        runtime = metrics.get("runtime") or {}
+        per_label = metrics.get("per_label") or {}
+        accuracy = _safe_float(top1.get("score"))
+        cost_total = _safe_float(runtime.get("cost_total_usd"))
+
+        per_label_f1: dict[str, float] = {}
+        for label in RCA_LABELS:
+            label_data = per_label.get(label) or {}
+            per_label_f1[label] = _safe_float(label_data.get("f1"))
+
+        scaffold_summaries[scaffold_name] = {
+            "accuracy": accuracy,
+            "correct": _safe_int(top1.get("correct")),
+            "total": _safe_int(top1.get("total")),
+            "cost_total_usd": cost_total,
+            "cost_avg_usd": _safe_float(runtime.get("cost_avg_usd")),
+            "wall_time_total_sec": _safe_float(runtime.get("wall_time_total_sec")),
+            "wall_time_avg_sec": _safe_float(runtime.get("wall_time_avg_sec")),
+            "tokens_total": _safe_int(runtime.get("tokens_total")),
+            "tokens_avg": _safe_float(runtime.get("tokens_avg")),
+            "per_label_f1": per_label_f1,
+            "delta_vs_heuristic": {
+                "accuracy_gain": accuracy - heuristic_accuracy,
+                "cost_delta_usd": cost_total - heuristic_cost,
+            },
+        }
+
+    return {
+        "generated_at": _utc_now_rfc3339(),
+        "manifest_path": str(Path(manifest_path)),
+        "scaffolds": scaffold_summaries,
+        "per_scaffold_full": per_scaffold,
+    }
+
+
+def format_comparative_report(report: dict[str, Any]) -> str:
+    scaffolds = report.get("scaffolds") or {}
+    lines: list[str] = [
+        "RLM-RCA Comparative Report",
+        f"Manifest: {report.get('manifest_path', 'unknown')}",
+        "",
+    ]
+
+    header_cols = ["Scaffold", "Accuracy", "Cost ($)", "Time (s)", "Tokens", "Acc. Gain"]
+    col_widths = [max(len(h), 16) for h in header_cols]
+    lines.append("  ".join(h.ljust(w) for h, w in zip(header_cols, col_widths)))
+    lines.append("  ".join("-" * w for w in col_widths))
+
+    for scaffold_name in sorted(scaffolds.keys()):
+        data = scaffolds[scaffold_name]
+        delta = data.get("delta_vs_heuristic") or {}
+        accuracy_str = f"{_safe_int(data.get('correct'))}/{_safe_int(data.get('total'))} ({_format_pct(_safe_float(data.get('accuracy')))})"
+        cost_str = f"${_safe_float(data.get('cost_total_usd')):.4f}"
+        time_str = f"{_safe_float(data.get('wall_time_total_sec')):.1f}"
+        tokens_str = str(_safe_int(data.get("tokens_total")))
+        gain_str = f"{_safe_float(delta.get('accuracy_gain')):+.1%}"
+        row = [scaffold_name, accuracy_str, cost_str, time_str, tokens_str, gain_str]
+        lines.append("  ".join(str(v).ljust(w) for v, w in zip(row, col_widths)))
+
+    lines.extend(["", "Per-Label F1 Breakdown:"])
+    for scaffold_name in sorted(scaffolds.keys()):
+        data = scaffolds[scaffold_name]
+        per_label_f1 = data.get("per_label_f1") or {}
+        f1_parts = [f"{label}={_format_score(_safe_float(per_label_f1.get(label)))}" for label in RCA_LABELS]
+        lines.append(f"  {scaffold_name}: {', '.join(f1_parts)}")
+
+    return "\n".join(lines)
+
+
 def _write_report(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")

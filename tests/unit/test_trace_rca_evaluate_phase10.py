@@ -250,6 +250,48 @@ def test_trace_rca_evaluate_main_writes_report_and_prints_summary(
     assert payload["metrics"]["top1_accuracy"]["total"] == 1
 
 
+def test_backward_compat_run_records_without_scaffold_field_still_evaluate(
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    runs_dir = tmp_path / "runs"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "dataset_id": "seeded_failures_v1",
+                "cases": [{"trace_id": "trace-1", "expected_label": "tool_failure"}],
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    _write_run(
+        runs_root=runs_dir,
+        run_id="run-no-scaffold",
+        trace_id="trace-1",
+        label="tool_failure",
+        confidence=0.88,
+        evidence_count=1,
+        started_at="2026-02-13T00:00:00Z",
+        completed_at="2026-02-13T00:00:10Z",
+        cost_usd=0.05,
+        tokens_in=50,
+        tokens_out=25,
+        iterations=2,
+        max_iterations=4,
+        tool_calls=4,
+        max_tool_calls=8,
+    )
+
+    report = evaluate_rca_runs(manifest_path=manifest_path, runs_dir=runs_dir)
+
+    top1 = report["metrics"]["top1_accuracy"]
+    assert top1["correct"] == 1
+    assert top1["total"] == 1
+    assert abs(top1["score"] - 1.0) < 1e-9
+
+
 def test_format_evaluation_report_includes_expected_sections(tmp_path: Path) -> None:
     manifest_path = tmp_path / "manifest.json"
     runs_dir = tmp_path / "runs"

@@ -134,6 +134,55 @@ def _truncate_output(text: str, *, max_chars: int) -> str:
     return text[:max_chars]
 
 
+def _normalize_tool_aliases(tool_aliases: dict[str, Any] | None) -> dict[str, list[str]]:
+    if not isinstance(tool_aliases, dict):
+        return {}
+    normalized: dict[str, list[str]] = {}
+    for tool_name, required_args_raw in tool_aliases.items():
+        name = str(tool_name).strip()
+        if not name:
+            continue
+        required_args: list[str] = []
+        if isinstance(required_args_raw, list):
+            for item in required_args_raw:
+                arg_name = str(item).strip()
+                if arg_name:
+                    required_args.append(arg_name)
+        normalized[name] = required_args
+    return normalized
+
+
+def _bind_tool_aliases(
+    *,
+    globals_env: dict[str, Any],
+    tool_aliases: dict[str, Any] | None,
+    call_tool: Any,
+) -> None:
+    normalized_aliases = _normalize_tool_aliases(tool_aliases)
+    for tool_name, required_args in normalized_aliases.items():
+        required_names = list(required_args)
+
+        def _make_tool_alias(bound_tool_name: str, bound_required_names: list[str]) -> Any:
+            def _tool_alias(*args: Any, **kwargs: Any) -> dict[str, Any]:
+                call_args = dict(kwargs)
+                if len(args) > len(bound_required_names):
+                    raise RuntimeError(
+                        f"[ToolError] {bound_tool_name} received too many positional arguments."
+                    )
+                for index, value in enumerate(args):
+                    arg_name = bound_required_names[index]
+                    if arg_name in call_args:
+                        raise RuntimeError(
+                            f"[ToolError] {bound_tool_name} received duplicate argument: {arg_name}."
+                        )
+                    call_args[arg_name] = value
+                return call_tool(bound_tool_name, **call_args)
+
+            return _tool_alias
+
+        globals_env[tool_name] = _make_tool_alias(tool_name, required_names)
+
+
 @dataclass
 class SandboxExecutionResult:
     stdout: str
@@ -229,6 +278,37 @@ _SUBPROCESS_SANDBOX_TEMPLATE = textwrap.dedent(
             }
         )
 
+    def _bind_tool_aliases(globals_env, tool_aliases):
+        if not isinstance(tool_aliases, dict):
+            return
+        for tool_name, required_args_raw in tool_aliases.items():
+            name = str(tool_name).strip()
+            if not name:
+                continue
+            required_args = []
+            if isinstance(required_args_raw, list):
+                required_args = [str(item) for item in required_args_raw if str(item)]
+
+            def _make_tool_alias(bound_name, bound_required_args):
+                def _tool_alias(*args, **kwargs):
+                    call_args = dict(kwargs)
+                    if len(args) > len(bound_required_args):
+                        raise RuntimeError(
+                            f"[ToolError] {bound_name} received too many positional arguments."
+                        )
+                    for index, value in enumerate(args):
+                        arg_name = bound_required_args[index]
+                        if arg_name in call_args:
+                            raise RuntimeError(
+                                f"[ToolError] {bound_name} received duplicate argument: {arg_name}."
+                            )
+                        call_args[arg_name] = value
+                    return _call_tool(bound_name, **call_args)
+
+                return _tool_alias
+
+            globals_env[name] = _make_tool_alias(name, required_args)
+
     def _llm_query(prompt):
         answer = _request({"event": "llm_query_request", "prompt": str(prompt)})
         if not isinstance(answer, str):
@@ -320,6 +400,7 @@ _SUBPROCESS_SANDBOX_TEMPLATE = textwrap.dedent(
         "textwrap": textwrap,
         "hashlib": hashlib,
     }
+    _bind_tool_aliases(globals_env, init_payload.get("tool_aliases"))
     globals_env["__builtins__"]["globals"] = lambda: dict(globals_env)
 
     stdout_buffer = io.StringIO()
@@ -423,6 +504,7 @@ def _run_subprocess_sandbox(
     timeout_sec: int,
     max_output_chars: int,
     locals_env: dict[str, Any] | None,
+    tool_aliases: dict[str, Any] | None,
     tool_handler: Any,
     llm_query_handler: Any,
     llm_query_batched_handler: Any,
@@ -449,7 +531,11 @@ def _run_subprocess_sandbox(
         process.stdin.flush()
 
     try:
-        init_payload = {"code": code, "locals": _json_safe(locals_env or {})}
+        init_payload = {
+            "code": code,
+            "locals": _json_safe(locals_env or {}),
+            "tool_aliases": _json_safe(_normalize_tool_aliases(tool_aliases)),
+        }
         process.stdin.write(json.dumps(init_payload, ensure_ascii=False) + "\n")
         process.stdin.flush()
 
@@ -606,6 +692,7 @@ def execute_in_sandbox(
     globals_env: dict[str, Any] | None = None,
     locals_env: dict[str, Any] | None = None,
     submit_signal_type: type[BaseException] | None = None,
+    tool_aliases: dict[str, Any] | None = None,
     tool_handler: Any = None,
     llm_query_handler: Any = None,
     llm_query_batched_handler: Any = None,
@@ -626,6 +713,7 @@ def execute_in_sandbox(
                 timeout_sec=timeout_sec,
                 max_output_chars=max_output_chars,
                 locals_env=locals_env,
+                tool_aliases=tool_aliases,
                 tool_handler=tool_handler,
                 llm_query_handler=llm_query_handler,
                 llm_query_batched_handler=llm_query_batched_handler,
@@ -903,6 +991,14 @@ class ReplInterpreter:
         def _submit(**fields: Any) -> None:
             raise _SubmitSignal(dict(fields))
 
+        tool_signatures = self._tool_registry.describe_tools()
+        tool_aliases = {
+            tool_name: list(
+                (tool_signatures.get(tool_name) or {}).get("required_args") or []
+            )
+            for tool_name in sorted(self._tool_registry.allowed_tools)
+            if tool_name in tool_signatures
+        }
         globals_env: dict[str, Any] = {
             "__builtins__": dict(_SAFE_BUILTINS),
             "call_tool": _call_tool,
@@ -913,6 +1009,11 @@ class ReplInterpreter:
             "re": re,
             "math": math,
         }
+        _bind_tool_aliases(
+            globals_env=globals_env,
+            tool_aliases=tool_aliases,
+            call_tool=_call_tool,
+        )
         globals_env["__builtins__"]["globals"] = lambda: dict(globals_env)
 
         sandbox_result = execute_in_sandbox(
@@ -922,6 +1023,7 @@ class ReplInterpreter:
             globals_env=globals_env,
             locals_env=self._locals,
             submit_signal_type=_SubmitSignal,
+            tool_aliases=tool_aliases,
             tool_handler=lambda tool_name, args: _call_tool(tool_name, **dict(args or {})),
             llm_query_handler=_llm_query,
             llm_query_batched_handler=_llm_query_batched,

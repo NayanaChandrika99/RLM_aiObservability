@@ -5,210 +5,420 @@
       "fault_profile": "profile_tool_failure",
       "notes": "seeded deterministic case 0",
       "run_id": "seed_run_0000",
-      "trace_id": "3123708cd9da0101339bb627db41cdf5"
+      "trace_id": "98078ad6c898099fc00e52daf7f6baa4"
     },
     {
       "expected_label": "retrieval_failure",
       "fault_profile": "profile_retrieval_failure",
       "notes": "seeded deterministic case 1",
       "run_id": "seed_run_0001",
-      "trace_id": "b39f3b4b5349938bef9f5d9535c0e359"
+      "trace_id": "d74ec8cb9d9c1888b6b3f6333cc0c7b7"
     },
     {
       "expected_label": "instruction_failure",
       "fault_profile": "profile_instruction_failure",
       "notes": "seeded deterministic case 2",
       "run_id": "seed_run_0002",
-      "trace_id": "6d2fd1d3cef6a9b8a04ca87032df2101"
+      "trace_id": "f5a3f852ce58e44cbba61433529f26ac"
     },
     {
       "expected_label": "upstream_dependency_failure",
       "fault_profile": "profile_upstream_dependency_failure",
       "notes": "seeded deterministic case 3",
       "run_id": "seed_run_0003",
-      "trace_id": "270390003a88dc15cbaab58788379fa2"
+      "trace_id": "a9460fc9a13b4f4669e887aa6b03b498"
     },
     {
       "expected_label": "data_schema_mismatch",
       "fault_profile": "profile_data_schema_mismatch",
       "notes": "seeded deterministic case 4",
       "run_id": "seed_run_0004",
-      "trace_id": "d8f6e1f691317858469b1f6d5127782d"
+      "trace_id": "d5d32988ce051303b27532383d062745"
     },
     {
       "expected_label": "tool_failure",
       "fault_profile": "profile_tool_failure",
       "notes": "seeded deterministic case 5",
       "run_id": "seed_run_0005",
-      "trace_id": "12f9b63bd1cc6768650d91f09205c3b9"
+      "trace_id": "665c1fd347e064cb3ad5b2f700999842"
     },
     {
       "expected_label": "tool_failure",
       "fault_profile": "profile_tool_failure",
       "notes": "seeded deterministic case 6",
       "run_id": "seed_run_0006",
-      "trace_id": "e135caad4ab4e55aa73747afc5978541"
+      "trace_id": "cb3b568a5a069c429fa60a82e6d5153b"
     },
     {
       "expected_label": "instruction_failure",
       "fault_profile": "profile_instruction_failure",
       "notes": "seeded deterministic case 7",
       "run_id": "seed_run_0007",
-      "trace_id": "44922bf704cd6c2d28828b9581d27c07"
+      "trace_id": "bb2ac3d71fc8dfe457fc5900543831dd"
     },
     {
       "expected_label": "retrieval_failure",
       "fault_profile": "profile_retrieval_failure",
       "notes": "seeded deterministic case 8",
       "run_id": "seed_run_0008",
-      "trace_id": "de5c5fdb697f0a3f2ff1e87cc727a143"
+      "trace_id": "2c7add23de2f72791533c2828d53b879"
     },
     {
       "expected_label": "retrieval_failure",
       "fault_profile": "profile_retrieval_failure",
       "notes": "seeded deterministic case 9",
       "run_id": "seed_run_0009",
-      "trace_id": "5c9aa9ae7f9c704a9c97f5d2d48fa473"
+      "trace_id": "ad751230003a33adc0445dd714f1d3a4"
     },
     {
       "expected_label": "retrieval_failure",
       "fault_profile": "profile_retrieval_failure",
       "notes": "seeded deterministic case 10",
       "run_id": "seed_run_0010",
-      "trace_id": "6d37a1c597a005288b69a639f9a5ac24"
+      "trace_id": "ada002c15acce16e7982f0a80052e88b"
     },
     {
       "expected_label": "tool_failure",
       "fault_profile": "profile_tool_failure",
       "notes": "seeded deterministic case 11",
       "run_id": "seed_run_0011",
-      "trace_id": "2ba66e26dd630ad12fd61be664b780c0"
+      "trace_id": "170889997d66deb8fba354dde56a33d2"
     },
     {
       "expected_label": "data_schema_mismatch",
       "fault_profile": "profile_data_schema_mismatch",
       "notes": "seeded deterministic case 12",
       "run_id": "seed_run_0012",
-      "trace_id": "3b08ccddcd650ca81d33c6d1f91c7107"
+      "trace_id": "af05b4f978cb3a3f2909e7a55c3a36f5"
     },
     {
       "expected_label": "tool_failure",
       "fault_profile": "profile_tool_failure",
       "notes": "seeded deterministic case 13",
       "run_id": "seed_run_0013",
-      "trace_id": "319f20072ddbac217ef9f1a87790bca3"
+      "trace_id": "be731b6674a4f2bb8819bf79ac9ab8f2"
     },
     {
       "expected_label": "data_schema_mismatch",
       "fault_profile": "profile_data_schema_mismatch",
       "notes": "seeded deterministic case 14",
       "run_id": "seed_run_0014",
-      "trace_id": "ed5e424c148ef11f05700f52bff46eb2"
+      "trace_id": "f355c97cc58bc9732d2115a1e6a6efae"
     },
     {
       "expected_label": "upstream_dependency_failure",
       "fault_profile": "profile_upstream_dependency_failure",
       "notes": "seeded deterministic case 15",
       "run_id": "seed_run_0015",
-      "trace_id": "4c46f27e5549274e10a332317d609676"
+      "trace_id": "730690b59489f66c2942490ab3dd06ca"
     },
     {
       "expected_label": "tool_failure",
       "fault_profile": "profile_tool_failure",
       "notes": "seeded deterministic case 16",
       "run_id": "seed_run_0016",
-      "trace_id": "be0654dec9f9b5515a3600233e4a48a8"
+      "trace_id": "f3177984d1401eff27725936dc26354a"
     },
     {
       "expected_label": "tool_failure",
       "fault_profile": "profile_tool_failure",
       "notes": "seeded deterministic case 17",
       "run_id": "seed_run_0017",
-      "trace_id": "bc3d6b32f37b44a4860457dac65405e3"
+      "trace_id": "c319450cefde63fe0d14af3ac48b0a4b"
     },
     {
       "expected_label": "tool_failure",
       "fault_profile": "profile_tool_failure",
       "notes": "seeded deterministic case 18",
       "run_id": "seed_run_0018",
-      "trace_id": "3879609aea738a2dbc730364ec8d7b7b"
+      "trace_id": "df306a28f3e60938027125681dce319e"
     },
     {
       "expected_label": "retrieval_failure",
       "fault_profile": "profile_retrieval_failure",
       "notes": "seeded deterministic case 19",
       "run_id": "seed_run_0019",
-      "trace_id": "134da00b636375f965a96de1f48c4bbb"
+      "trace_id": "27322f914e540749cc5dbbeb4d08a7ae"
     },
     {
       "expected_label": "retrieval_failure",
       "fault_profile": "profile_retrieval_failure",
       "notes": "seeded deterministic case 20",
       "run_id": "seed_run_0020",
-      "trace_id": "8252357c69d9410cc734c37060596fc3"
+      "trace_id": "4dd8288765d886eb5dbc6354a783f51e"
     },
     {
       "expected_label": "data_schema_mismatch",
       "fault_profile": "profile_data_schema_mismatch",
       "notes": "seeded deterministic case 21",
       "run_id": "seed_run_0021",
-      "trace_id": "126565fe1d9b3c20fae2c1fe8825959a"
+      "trace_id": "2092f4d7418919ec23e027777ec5c61b"
     },
     {
       "expected_label": "data_schema_mismatch",
       "fault_profile": "profile_data_schema_mismatch",
       "notes": "seeded deterministic case 22",
       "run_id": "seed_run_0022",
-      "trace_id": "6bf335e4eab23e263c8f21209add54a2"
+      "trace_id": "0a1f866d569d238b554abb6d8e047f94"
     },
     {
       "expected_label": "tool_failure",
       "fault_profile": "profile_tool_failure",
       "notes": "seeded deterministic case 23",
       "run_id": "seed_run_0023",
-      "trace_id": "0dfb14aa4a165e6f9ae4733a4c383187"
+      "trace_id": "7a9280f6e1571330b5df456330bd5c13"
     },
     {
       "expected_label": "data_schema_mismatch",
       "fault_profile": "profile_data_schema_mismatch",
       "notes": "seeded deterministic case 24",
       "run_id": "seed_run_0024",
-      "trace_id": "5f89229737cf7743cbedc89e5c5d4844"
+      "trace_id": "36e77ddb3d7af523c2b1ac70705fe0e6"
     },
     {
       "expected_label": "retrieval_failure",
       "fault_profile": "profile_retrieval_failure",
       "notes": "seeded deterministic case 25",
       "run_id": "seed_run_0025",
-      "trace_id": "970f6273bd345d64c006572ffa258ad2"
+      "trace_id": "e067b0b723dab026ab853f1c4d801a63"
     },
     {
       "expected_label": "data_schema_mismatch",
       "fault_profile": "profile_data_schema_mismatch",
       "notes": "seeded deterministic case 26",
       "run_id": "seed_run_0026",
-      "trace_id": "e23411c30e23db6ecfd715d09a257c55"
+      "trace_id": "12bbd1c0b467a5c7334735002cd90706"
     },
     {
       "expected_label": "upstream_dependency_failure",
       "fault_profile": "profile_upstream_dependency_failure",
       "notes": "seeded deterministic case 27",
       "run_id": "seed_run_0027",
-      "trace_id": "2c476f20163f6928fb0a5b7fca81f51e"
+      "trace_id": "86132e12da5eca7c2fef922187027bcb"
     },
     {
       "expected_label": "retrieval_failure",
       "fault_profile": "profile_retrieval_failure",
       "notes": "seeded deterministic case 28",
       "run_id": "seed_run_0028",
-      "trace_id": "7f47c6c64c49d0676acbc4d065e4b043"
+      "trace_id": "ddc10bc0a29c9bd283808c9fe33b17d5"
     },
     {
       "expected_label": "upstream_dependency_failure",
       "fault_profile": "profile_upstream_dependency_failure",
       "notes": "seeded deterministic case 29",
       "run_id": "seed_run_0029",
-      "trace_id": "8a78d901496fa3fd94bdbebf57f55df3"
+      "trace_id": "e4c3762227d732108a54e8833abb86cd"
+    },
+    {
+      "expected_label": "tool_failure",
+      "fault_profile": "profile_multi_tool_failure",
+      "notes": "multi-tool sequential failure case 30",
+      "run_id": "seed_run_0030",
+      "trace_id": "a8c5d261faebfbbbe75b100f58ab35d5"
+    },
+    {
+      "expected_label": "tool_failure",
+      "fault_profile": "profile_multi_tool_failure",
+      "notes": "multi-tool sequential failure case 31",
+      "run_id": "seed_run_0031",
+      "trace_id": "b619777daa3ea14cc57a4a0758ea5dcf"
+    },
+    {
+      "expected_label": "tool_failure",
+      "fault_profile": "profile_multi_tool_failure",
+      "notes": "multi-tool sequential failure case 32",
+      "run_id": "seed_run_0032",
+      "trace_id": "6135999a184b108f0bc0f5ae71a46db9"
+    },
+    {
+      "expected_label": "retrieval_failure",
+      "fault_profile": "profile_cascading_retrieval_failure",
+      "notes": "cascading retrieval + hallucination case 33",
+      "run_id": "seed_run_0033",
+      "trace_id": "9a687836c40e86dffd591bd3200c350e"
+    },
+    {
+      "expected_label": "retrieval_failure",
+      "fault_profile": "profile_cascading_retrieval_failure",
+      "notes": "cascading retrieval + hallucination case 34",
+      "run_id": "seed_run_0034",
+      "trace_id": "6faeef45e1d8df93463f83283e875022"
+    },
+    {
+      "expected_label": "retrieval_failure",
+      "fault_profile": "profile_cascading_retrieval_failure",
+      "notes": "cascading retrieval + hallucination case 35",
+      "run_id": "seed_run_0035",
+      "trace_id": "c7de0eefa8e2c682ab82054483375f9a"
+    },
+    {
+      "expected_label": "retrieval_failure",
+      "fault_profile": "profile_cascading_retrieval_failure",
+      "notes": "cascading retrieval + hallucination case 36",
+      "run_id": "seed_run_0036",
+      "trace_id": "5d6f7b34bfb6469c15fd770e3db71734"
+    },
+    {
+      "expected_label": "upstream_dependency_failure",
+      "fault_profile": "profile_timeout_upstream",
+      "notes": "timeout upstream variant case 37",
+      "run_id": "seed_run_0037",
+      "trace_id": "63cdd111a0dd37fae8e7547f5105606b"
+    },
+    {
+      "expected_label": "upstream_dependency_failure",
+      "fault_profile": "profile_timeout_upstream",
+      "notes": "timeout upstream variant case 38",
+      "run_id": "seed_run_0038",
+      "trace_id": "b42723dcef4a3df54f84ed2f3b691718"
+    },
+    {
+      "expected_label": "upstream_dependency_failure",
+      "fault_profile": "profile_timeout_upstream",
+      "notes": "timeout upstream variant case 39",
+      "run_id": "seed_run_0039",
+      "trace_id": "8a1423f2419d6389082ef940d72d2d53"
+    },
+    {
+      "expected_label": "upstream_dependency_failure",
+      "fault_profile": "profile_timeout_upstream",
+      "notes": "timeout upstream variant case 40",
+      "run_id": "seed_run_0040",
+      "trace_id": "a0a2a3021bc98adc108c1044d745c061"
+    },
+    {
+      "expected_label": "upstream_dependency_failure",
+      "fault_profile": "profile_upstream_dependency_failure",
+      "notes": "seeded deterministic case 41",
+      "run_id": "seed_run_0041",
+      "trace_id": "76177ed61a8ba69cded54002e1d73c3e"
+    },
+    {
+      "expected_label": "upstream_dependency_failure",
+      "fault_profile": "profile_upstream_dependency_failure",
+      "notes": "seeded deterministic case 42",
+      "run_id": "seed_run_0042",
+      "trace_id": "5f3865c5ba5811acfcfb6942bea3f37d"
+    },
+    {
+      "expected_label": "instruction_failure",
+      "fault_profile": "profile_instruction_failure",
+      "notes": "seeded deterministic case 43",
+      "run_id": "seed_run_0043",
+      "trace_id": "7319258cc2628fb4c56f8330e5cd0999"
+    },
+    {
+      "expected_label": "instruction_failure",
+      "fault_profile": "profile_instruction_failure",
+      "notes": "seeded deterministic case 44",
+      "run_id": "seed_run_0044",
+      "trace_id": "400216dd39a68b4f0ca2e7e69afd7ce1"
+    },
+    {
+      "expected_label": "instruction_failure",
+      "fault_profile": "profile_instruction_failure",
+      "notes": "seeded deterministic case 45",
+      "run_id": "seed_run_0045",
+      "trace_id": "a1714d123d93d3b1815cee55b942abb3"
+    },
+    {
+      "expected_label": "instruction_failure",
+      "fault_profile": "profile_instruction_failure",
+      "notes": "seeded deterministic case 46",
+      "run_id": "seed_run_0046",
+      "trace_id": "d6723eb346471fcd6c10dad17fa07c78"
+    },
+    {
+      "expected_label": "instruction_failure",
+      "fault_profile": "profile_instruction_failure",
+      "notes": "seeded deterministic case 47",
+      "run_id": "seed_run_0047",
+      "trace_id": "c7ad06f49207a303294e2b7cbea36d2a"
+    },
+    {
+      "expected_label": "instruction_failure",
+      "fault_profile": "profile_instruction_failure",
+      "notes": "seeded deterministic case 48",
+      "run_id": "seed_run_0048",
+      "trace_id": "bd4cc26f38eefca8fa3e6e8bcaea138e"
+    },
+    {
+      "expected_label": "instruction_failure",
+      "fault_profile": "profile_instruction_failure",
+      "notes": "seeded deterministic case 49",
+      "run_id": "seed_run_0049",
+      "trace_id": "6fecbaba55cfbe0d60c409f312293a02"
+    },
+    {
+      "expected_label": "instruction_failure",
+      "fault_profile": "profile_instruction_failure",
+      "notes": "seeded deterministic case 50",
+      "run_id": "seed_run_0050",
+      "trace_id": "60d70ae7c065b187b31bd78108c37de2"
+    },
+    {
+      "expected_label": "instruction_failure",
+      "fault_profile": "profile_instruction_failure",
+      "notes": "seeded deterministic case 51",
+      "run_id": "seed_run_0051",
+      "trace_id": "61d377baf1e21c4c0c224ea66b9cc17a"
+    },
+    {
+      "expected_label": "instruction_failure",
+      "fault_profile": "profile_instruction_failure",
+      "notes": "seeded deterministic case 52",
+      "run_id": "seed_run_0052",
+      "trace_id": "8cc3cf16be9d97b581ec09d12b30431c"
+    },
+    {
+      "expected_label": "data_schema_mismatch",
+      "fault_profile": "profile_data_schema_mismatch",
+      "notes": "seeded deterministic case 53",
+      "run_id": "seed_run_0053",
+      "trace_id": "9f74b8314bc39e0984b1123b8195b59d"
+    },
+    {
+      "expected_label": "data_schema_mismatch",
+      "fault_profile": "profile_data_schema_mismatch",
+      "notes": "seeded deterministic case 54",
+      "run_id": "seed_run_0054",
+      "trace_id": "a5f7f8e2083e95b6017bc6b94be9f91f"
+    },
+    {
+      "expected_label": "data_schema_mismatch",
+      "fault_profile": "profile_data_schema_mismatch",
+      "notes": "seeded deterministic case 55",
+      "run_id": "seed_run_0055",
+      "trace_id": "50e6c15886cec83e0312a1772751912b"
+    },
+    {
+      "expected_label": "data_schema_mismatch",
+      "fault_profile": "profile_data_schema_mismatch",
+      "notes": "seeded deterministic case 56",
+      "run_id": "seed_run_0056",
+      "trace_id": "de3f0e690cf9ce00a37dbe106a394591"
+    },
+    {
+      "expected_label": "data_schema_mismatch",
+      "fault_profile": "profile_data_schema_mismatch",
+      "notes": "seeded deterministic case 57",
+      "run_id": "seed_run_0057",
+      "trace_id": "f4a189eefd298d53ac61fa79229c60a5"
+    },
+    {
+      "expected_label": "upstream_dependency_failure",
+      "fault_profile": "profile_timeout_upstream",
+      "notes": "timeout upstream variant case 58",
+      "run_id": "seed_run_0058",
+      "trace_id": "f8d0f9df931fa40307a846cd4318e8d4"
+    },
+    {
+      "expected_label": "upstream_dependency_failure",
+      "fault_profile": "profile_timeout_upstream",
+      "notes": "timeout upstream variant case 59",
+      "run_id": "seed_run_0059",
+      "trace_id": "948c1d493fc6e3540d50ed1e05f01107"
     }
   ],
   "dataset_id": "seeded_failures_v1",

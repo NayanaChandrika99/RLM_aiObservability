@@ -52,6 +52,39 @@ _ALLOWED_RCA_LABELS = {
     "upstream_dependency_failure",
     "data_schema_mismatch",
 }
+_RCA_REPL_ALLOWED_TOOLS = {
+    "list_spans",
+    "get_spans",
+    "get_span",
+    "get_children",
+    "get_messages",
+    "get_tool_io",
+    "get_retrieval_chunks",
+}
+_TRACE_RCA_TIPS_PROFILES: dict[str, str] = {
+    "none": "",
+    "trace_rca_v1": (
+        "Prefer branch-root evidence first. Focus on one likely failure family at a time. "
+        "For non-trivial RCA traces, execute one llm_query before final SUBMIT; if no subquery has "
+        "occurred yet, call llm_query in the same final snippet before SUBMIT. "
+        "Before submitting, validate the chosen label against at least one contradictory clue "
+        "from messages, tool_io, or retrieval chunks; if contradiction is unresolved, report it in gaps."
+    ),
+}
+
+
+def list_trace_rca_tips_profiles() -> list[str]:
+    return sorted(_TRACE_RCA_TIPS_PROFILES.keys())
+
+
+def resolve_trace_rca_tips_profile(tips_profile: str) -> str:
+    normalized_profile = str(tips_profile or "none").strip().lower() or "none"
+    if normalized_profile not in _TRACE_RCA_TIPS_PROFILES:
+        available_profiles = ", ".join(list_trace_rca_tips_profiles())
+        raise ValueError(
+            f"Unknown trace RCA tips profile: {tips_profile!r}. Available profiles: {available_profiles}"
+        )
+    return str(_TRACE_RCA_TIPS_PROFILES[normalized_profile]).strip()
 
 
 class TraceRCAEngine:
@@ -76,6 +109,7 @@ class TraceRCAEngine:
         use_repl_runtime: bool = False,
         recursive_budget: RuntimeBudget | None = None,
         fallback_on_llm_error: bool = False,
+        repl_env_tips: str | None = None,
     ) -> None:
         self._inspection_api = inspection_api
         self._model_client = model_client
@@ -99,6 +133,7 @@ class TraceRCAEngine:
             max_tokens_total=200000,
         )
         self._fallback_on_llm_error = fallback_on_llm_error or auto_repl_runtime
+        self._repl_env_tips = str(repl_env_tips or "").strip()
         self._prompt_definition: PromptDefinition = _TRACE_RCA_PROMPT_DEFINITION
         if self._use_llm_judgment and self._use_repl_runtime:
             self._prompt_definition = get_prompt_definition(_REPL_RCA_PROMPT_ID)
@@ -284,6 +319,8 @@ class TraceRCAEngine:
         )
 
         has_tool_failure = False
+        has_non_schema_tool_failure = False
+        has_schema_tool_failure = False
         has_upstream_failure = False
         has_schema_failure = False
         has_retrieval_failure = False
@@ -300,14 +337,22 @@ class TraceRCAEngine:
 
             if upstream_pattern.search(status_text):
                 has_upstream_failure = True
-            if schema_pattern.search(status_text):
+            has_schema_signal = bool(schema_pattern.search(status_text))
+            if has_schema_signal:
                 has_schema_failure = True
             if instruction_pattern.search(status_text):
                 has_instruction_failure = True
 
             tool_status_error = bool(tool_io) and str(tool_io.get("status_code")) == "ERROR"
-            if span_kind == "TOOL" and (status_code == "ERROR" or tool_status_error):
+            is_tool_span = span_kind == "TOOL" or (
+                span_kind == "UNKNOWN" and span_name.startswith("tool.")
+            )
+            if is_tool_span and (status_code == "ERROR" or tool_status_error):
                 has_tool_failure = True
+                if has_schema_signal:
+                    has_schema_tool_failure = True
+                else:
+                    has_non_schema_tool_failure = True
 
             is_retriever_span = span_kind == "RETRIEVER" or (
                 span_kind == "UNKNOWN" and span_name.startswith("retriever.")
@@ -316,10 +361,14 @@ class TraceRCAEngine:
                 if status_code == "ERROR" or len(retrieval_chunks) == 0:
                     has_retrieval_failure = True
 
-        if has_upstream_failure:
-            return "upstream_dependency_failure"
+        if has_non_schema_tool_failure:
+            return "tool_failure"
+        if has_schema_tool_failure:
+            return "data_schema_mismatch"
         if has_tool_failure:
             return "tool_failure"
+        if has_upstream_failure:
+            return "upstream_dependency_failure"
         if has_schema_failure:
             return "data_schema_mismatch"
         if has_retrieval_failure:
@@ -778,11 +827,12 @@ class TraceRCAEngine:
         max_cost_usd = loop_budget.max_cost_usd
         if max_cost_usd is not None:
             max_cost_usd = min(float(max_cost_usd), 0.12)
+        max_iterations = max(2, min(int(loop_budget.max_iterations), 5))
         return RuntimeBudget(
-            max_iterations=1,
+            max_iterations=max_iterations,
             max_depth=max(0, int(loop_budget.max_depth)),
             max_tool_calls=max(1, min(int(loop_budget.max_tool_calls), 6)),
-            max_subcalls=max(1, min(int(loop_budget.max_subcalls), 2)),
+            max_subcalls=max(1, min(int(loop_budget.max_subcalls), 5)),
             max_tokens_total=max_tokens_total,
             max_cost_usd=max_cost_usd,
             sampling_seed=loop_budget.sampling_seed,
@@ -805,7 +855,10 @@ class TraceRCAEngine:
         self._runtime_signals["rca_judgment_mode"] = "repl_llm"
 
         repl_loop = ReplLoop(
-            tool_registry=ToolRegistry(inspection_api=inspection_api),
+            tool_registry=ToolRegistry(
+                inspection_api=inspection_api,
+                allowed_tools=_RCA_REPL_ALLOWED_TOOLS,
+            ),
             model_client=model_client,
             model_name=self.model_name,
             temperature=self.temperature,
@@ -833,6 +886,7 @@ class TraceRCAEngine:
                 "evidence_seed": [self._evidence_dict(ref) for ref in evidence_refs[:20]],
             },
             pre_filter_context=pre_filter_context,
+            env_tips=self._repl_env_tips or None,
             budget=tuned_loop_budget,
             require_subquery_for_non_trivial=True,
         )

@@ -20,6 +20,10 @@ class _InspectionAPI:
     def list_spans(self, trace_id: str) -> list[dict[str, Any]]:
         return [{"trace_id": trace_id, "span_id": "root"}]
 
+    def get_spans(self, trace_id: str, type: str | None = None) -> list[dict[str, Any]]:
+        del type
+        return self.list_spans(trace_id)
+
     def get_control(self, control_id: str, controls_version: str) -> dict[str, Any]:
         if not isinstance(control_id, str):
             raise TypeError("control_id must be a string")
@@ -171,6 +175,57 @@ def test_repl_loop_executes_code_with_tool_and_subquery_then_submit() -> None:
     assert "Classify likely RCA label" in subquery_trace[0]["prompt"]
     assert subquery_trace[0]["answer"] == "tool_failure"
     assert "running" in result.state_trajectory
+
+
+def test_repl_loop_supports_direct_tool_alias_calls_with_positional_trace_id() -> None:
+    model_client = _FakeModelClient(
+        step_outputs=[
+            {
+                "reasoning": "Use direct tool helper aliases and submit.",
+                "code": (
+                    "spans_a = list_spans(trace_id)\n"
+                    "spans_b = get_spans(trace_id)\n"
+                    "print(len(spans_a.get('result', [])))\n"
+                    "print(len(spans_b.get('result', [])))\n"
+                    "SUBMIT("
+                    "primary_label='instruction_failure',"
+                    "summary='direct helper aliases worked',"
+                    "confidence=0.52,"
+                    "remediation=['Keep alias helpers bound in REPL runtime.'],"
+                    "evidence_refs=evidence_seed,"
+                    "gaps=[]"
+                    ")"
+                ),
+            }
+        ],
+        subquery_outputs=[],
+    )
+    loop = ReplLoop(
+        tool_registry=ToolRegistry(inspection_api=_InspectionAPI()),
+        model_client=model_client,
+        model_name="gpt-5-mini",
+        temperature=0.0,
+    )
+
+    result = loop.run(
+        objective="Phase10 direct tool helper alias compatibility",
+        input_vars={"trace_id": "trace-repl", "evidence_seed": []},
+        budget=RuntimeBudget(max_iterations=1, max_subcalls=1),
+        require_subquery_for_non_trivial=False,
+    )
+
+    assert result.status == "completed"
+    assert isinstance(result.output, dict)
+    assert result.output.get("summary") == "direct helper aliases worked"
+    assert result.repl_trajectory
+    output_text = str(result.repl_trajectory[0]["output"] or "")
+    assert "[Error]" not in output_text
+    tool_trace = result.repl_trajectory[0]["tool_trace"]
+    assert len(tool_trace) == 2
+    assert tool_trace[0]["tool_name"] == "list_spans"
+    assert tool_trace[1]["tool_name"] == "get_spans"
+    assert tool_trace[0]["status"] == "ok"
+    assert tool_trace[1]["status"] == "ok"
 
 
 def test_repl_loop_prefers_text_generation_for_subqueries_when_available() -> None:
@@ -347,7 +402,17 @@ def test_repl_loop_fails_on_sandbox_violation_in_code() -> None:
         step_outputs=[
             {
                 "reasoning": "Attempt forbidden filesystem call.",
-                "code": "open('x.txt', 'w')",
+                "code": (
+                    "open('x.txt', 'w')\n"
+                    "SUBMIT("
+                    "primary_label='instruction_failure',"
+                    "summary='should not complete',"
+                    "confidence=0.1,"
+                    "remediation=['none'],"
+                    "evidence_refs=evidence_seed,"
+                    "gaps=[]"
+                    ")"
+                ),
             }
         ],
         subquery_outputs=[],
@@ -583,12 +648,22 @@ def test_repl_loop_allows_safe_json_import_for_repl_fallback_parsing() -> None:
     assert result.output.get("summary") == "score=7"
 
 
-def test_repl_loop_recovers_with_deterministic_rca_submit_on_last_iteration_error() -> None:
+def test_repl_loop_fails_hard_on_last_iteration_execution_error_for_rca() -> None:
     model_client = _FakeModelClient(
         step_outputs=[
             {
                 "reasoning": "Trigger execution failure on final iteration.",
-                "code": "print(undefined_symbol)",
+                "code": (
+                    "print(undefined_symbol)\n"
+                    "SUBMIT("
+                    "primary_label='data_schema_mismatch',"
+                    "summary='should not execute submit',"
+                    "confidence=0.1,"
+                    "remediation=['none'],"
+                    "evidence_refs=evidence_seed,"
+                    "gaps=[]"
+                    ")"
+                ),
             }
         ],
         subquery_outputs=[],
@@ -612,20 +687,31 @@ def test_repl_loop_recovers_with_deterministic_rca_submit_on_last_iteration_erro
         require_subquery_for_non_trivial=True,
     )
 
-    assert result.status == "completed"
-    assert isinstance(result.output, dict)
-    assert result.output.get("primary_label") == "data_schema_mismatch"
-    assert any("undefined_symbol" in str(item) for item in (result.output.get("gaps") or []))
+    assert result.status == "failed"
+    assert result.output is None
+    assert result.error_code == "SUBMIT_DEADLINE_REACHED"
+    assert "undefined_symbol" in str(result.error_message or "")
     assert result.repl_trajectory
-    assert "[Recovery] Deterministic fallback SUBMIT applied" in str(result.repl_trajectory[0]["output"])
+    assert "[Recovery] Deterministic fallback SUBMIT applied" not in str(result.repl_trajectory[0]["output"])
 
 
-def test_repl_loop_recovers_with_deterministic_compliance_submit_on_last_iteration_error() -> None:
+def test_repl_loop_fails_hard_on_last_iteration_execution_error_for_compliance() -> None:
     model_client = _FakeModelClient(
         step_outputs=[
             {
                 "reasoning": "Trigger execution failure on final iteration.",
-                "code": "print(undefined_policy_var)",
+                "code": (
+                    "print(undefined_policy_var)\n"
+                    "SUBMIT("
+                    "pass_fail='insufficient_evidence',"
+                    "confidence=0.1,"
+                    "rationale='should not execute submit',"
+                    "covered_requirements=[],"
+                    "missing_evidence=['required_error_span'],"
+                    "evidence_refs=[default_evidence],"
+                    "gaps=[]"
+                    ")"
+                ),
             }
         ],
         subquery_outputs=[],
@@ -658,22 +744,22 @@ def test_repl_loop_recovers_with_deterministic_compliance_submit_on_last_iterati
         require_subquery_for_non_trivial=True,
     )
 
-    assert result.status == "completed"
-    assert isinstance(result.output, dict)
-    assert result.output.get("pass_fail") == "insufficient_evidence"
-    assert "required_error_span" in [str(item) for item in (result.output.get("missing_evidence") or [])]
-    evidence_refs = result.output.get("evidence_refs") or []
-    assert isinstance(evidence_refs, list)
-    assert evidence_refs and evidence_refs[0].get("span_id") == "root"
-    assert any("undefined_policy_var" in str(item) for item in (result.output.get("gaps") or []))
+    assert result.status == "failed"
+    assert result.output is None
+    assert result.error_code == "SUBMIT_DEADLINE_REACHED"
+    assert "undefined_policy_var" in str(result.error_message or "")
 
 
-def test_repl_loop_recovers_with_deterministic_submit_when_deadline_hits_without_submit() -> None:
+def test_repl_loop_fails_hard_when_deadline_hits_without_submit() -> None:
     model_client = _FakeModelClient(
         step_outputs=[
             {
                 "reasoning": "Do work but do not submit.",
                 "code": "x = 1\nprint('no submit in this step')",
+            },
+            {
+                "reasoning": "Still do not submit after enforcement retry.",
+                "code": "x = 2\nprint('still no submit')",
             }
         ],
         subquery_outputs=[],
@@ -697,14 +783,14 @@ def test_repl_loop_recovers_with_deterministic_submit_when_deadline_hits_without
         require_subquery_for_non_trivial=True,
     )
 
-    assert result.status == "completed"
-    assert isinstance(result.output, dict)
-    assert result.output.get("primary_label") == "tool_failure"
-    assert result.repl_trajectory
-    assert "submit deadline reached without SUBMIT" in str(result.repl_trajectory[0]["output"])
+    assert result.status == "failed"
+    assert result.output is None
+    assert result.error_code == "MODEL_OUTPUT_INVALID"
+    assert "must include SUBMIT" in str(result.error_message or "")
+    assert result.repl_trajectory == []
 
 
-def test_repl_loop_recovers_with_deterministic_submit_on_planning_budget_exhaustion() -> None:
+def test_repl_loop_fails_hard_on_planning_budget_exhaustion_after_progress() -> None:
     model_client = _FakeModelClient(
         step_outputs=[
             {
@@ -746,12 +832,10 @@ def test_repl_loop_recovers_with_deterministic_submit_on_planning_budget_exhaust
         require_subquery_for_non_trivial=True,
     )
 
-    assert result.status == "completed"
-    assert isinstance(result.output, dict)
-    assert result.output.get("primary_label") == "tool_failure"
-    assert any(
-        "max_tokens_total reached" in str(item) for item in (result.output.get("gaps") or [])
-    )
+    assert result.status == "failed"
+    assert result.output is None
+    assert result.error_code == "BUDGET_EXHAUSTED"
+    assert "max_tokens_total reached" in str(result.error_message or "")
 
 
 def test_repl_loop_includes_pre_filter_context_in_prompt_context() -> None:
@@ -798,3 +882,130 @@ def test_repl_loop_includes_pre_filter_context_in_prompt_context() -> None:
     assert "\"pre_filter_context\"" in prompt_text
     assert "\"hot_spans\"" in prompt_text
     assert "\"branch_span_ids\"" in prompt_text
+
+
+def test_repl_loop_includes_env_tips_in_prompt_context() -> None:
+    model_client = _FakeModelClient(
+        step_outputs=[
+            {
+                "reasoning": "Submit immediately.",
+                "code": (
+                    "SUBMIT("
+                    "primary_label='instruction_failure',"
+                    "summary='done',"
+                    "confidence=0.5,"
+                    "remediation=['none'],"
+                    "evidence_refs=evidence_seed,"
+                    "gaps=[]"
+                    ")"
+                ),
+            }
+        ],
+        subquery_outputs=[],
+    )
+    loop = ReplLoop(
+        tool_registry=ToolRegistry(inspection_api=_InspectionAPI()),
+        model_client=model_client,
+        model_name="gpt-5-mini",
+        temperature=0.0,
+    )
+
+    _ = loop.run(
+        objective="Phase10 env tips prompt",
+        input_vars={"trace_id": "trace-repl", "evidence_seed": []},
+        env_tips="Prefer branch-root evidence first and avoid repeated refetch loops.",
+        budget=RuntimeBudget(max_iterations=1, max_subcalls=1),
+        require_subquery_for_non_trivial=False,
+    )
+
+    assert model_client.requests
+    first_request = model_client.requests[0]
+    prompt_text = str(getattr(first_request, "user_prompt", ""))
+    assert "\"env_tips\"" in prompt_text
+    assert "Prefer branch-root evidence first" in prompt_text
+
+
+def test_repl_loop_includes_non_trivial_subquery_requirement_in_prompt_context() -> None:
+    model_client = _FakeModelClient(
+        step_outputs=[
+            {
+                "reasoning": "Submit immediately.",
+                "code": (
+                    "SUBMIT("
+                    "primary_label='instruction_failure',"
+                    "summary='done',"
+                    "confidence=0.5,"
+                    "remediation=['none'],"
+                    "evidence_refs=evidence_seed,"
+                    "gaps=[]"
+                    ")"
+                ),
+            }
+        ],
+        subquery_outputs=[],
+    )
+    loop = ReplLoop(
+        tool_registry=ToolRegistry(inspection_api=_InspectionAPI()),
+        model_client=model_client,
+        model_name="gpt-5-mini",
+        temperature=0.0,
+    )
+
+    _ = loop.run(
+        objective="Phase10 non-trivial subquery prompt contract",
+        input_vars={"trace_id": "trace-repl", "evidence_seed": []},
+        budget=RuntimeBudget(max_iterations=1, max_subcalls=1),
+        require_subquery_for_non_trivial=True,
+    )
+
+    assert model_client.requests
+    first_request = model_client.requests[0]
+    prompt_text = str(getattr(first_request, "user_prompt", ""))
+    assert "\"require_subquery_for_non_trivial\": true" in prompt_text
+
+
+def test_repl_loop_regenerates_once_when_submit_required_and_first_plan_omits_submit() -> None:
+    model_client = _FakeModelClient(
+        step_outputs=[
+            {
+                "reasoning": "Inspect before finalizing.",
+                "code": "print('planned step without submit')",
+            },
+            {
+                "reasoning": "Finalize now with submit.",
+                "code": (
+                    "SUBMIT("
+                    "primary_label='tool_failure',"
+                    "summary='finalized after submit enforcement',"
+                    "confidence=0.61,"
+                    "remediation=['stabilize finalize behavior'],"
+                    "evidence_refs=evidence_seed,"
+                    "gaps=[]"
+                    ")"
+                ),
+            },
+        ],
+        subquery_outputs=[],
+    )
+    loop = ReplLoop(
+        tool_registry=ToolRegistry(inspection_api=_InspectionAPI()),
+        model_client=model_client,
+        model_name="gpt-5-mini",
+        temperature=0.0,
+    )
+
+    result = loop.run(
+        objective="Phase10 submit enforcement",
+        input_vars={"trace_id": "trace-repl", "evidence_seed": []},
+        budget=RuntimeBudget(max_iterations=1, max_subcalls=1),
+        require_subquery_for_non_trivial=False,
+    )
+
+    assert result.status == "completed"
+    assert isinstance(result.output, dict)
+    assert result.output.get("summary") == "finalized after submit enforcement"
+    assert len(result.repl_trajectory) == 1
+    assert "SUBMIT(" in str(result.repl_trajectory[0]["code"] or "")
+    assert len(model_client.requests) == 2
+    second_prompt = str(getattr(model_client.requests[1], "user_prompt", ""))
+    assert "\"submit_enforcement\"" in second_prompt
