@@ -23,7 +23,12 @@ datasets/**/*.parquet
 # Runtime artifacts (keep curated proof outputs, ignore high-volume run dumps/checkpoints)
 artifacts/investigator_runs/
 artifacts/proof_runs/
+artifacts/investigator_runs*/
+artifacts/evaluation/
+artifacts/logs/
 
-# Reference repos (kept as standalone git repos)
-phoenix/
-rlm/
+# Local research assets
+AgentCompass.pdf
+RLM_oservability.pptx
+image.png
+xnotes.md

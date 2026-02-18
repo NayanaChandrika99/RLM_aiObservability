@@ -1,0 +1,39 @@
+{
+  "trace_id": "860f9d45f2e50bfecb190bb26eff1f32",
+  "errors": [
+    {
+      "category": "Authentication Errors",
+      "location": "97f45a29af5413c5",
+      "evidence": "Step 3 Ok  {\"input.value\": \"{\\\"memory_step\\\": \\\"ActionStep(model_input_messages=None, tool_calls=None, start_time=1742403093.482605, end_time=None, step_number=3, error=None, duration=None, model_output_message=None, model_output=None, observations=None, observations_images=None, action_output=None)",
+      "description": "Detected a authentication errors signal from trace content.",
+      "impact": "MEDIUM"
+    },
+    {
+      "category": "Resource Not Found",
+      "location": "dcd8d6b3a5526156",
+      "evidence": "Step 2 Ok  {\"input.value\": \"{\\\"memory_step\\\": \\\"ActionStep(model_input_messages=None, tool_calls=None, start_time=1742405637.589702, end_time=None, step_number=2, error=None, duration=None, model_output_message=None, model_output=None, observations=None, observations_images=None, action_output=None)",
+      "description": "Detected a resource not found signal from trace content.",
+      "impact": "MEDIUM"
+    },
+    {
+      "category": "Environment Setup Errors",
+      "location": "545e0216b468b340",
+      "evidence": "LiteLLMModel.__call__ Ok  {\"input.mime_type\": \"application/json\", \"input.value\": \"{\\\"messages\\\": [{\\\"role\\\": \\\"system\\\", \\\"content\\\": [{\\\"type\\\": \\\"text\\\", \\\"text\\\": \\\"You are an expert assistant who can solve any task using code blobs. You will be given a task to solve as best you can.\\\\nTo do so, ",
+      "description": "Detected a environment setup errors signal from trace content.",
+      "impact": "MEDIUM"
+    }
+  ],
+  "scores": [
+    {
+      "reliability_score": 2,
+      "reliability_reasoning": "Detected failures reduce confidence in reliability for this trace.",
+      "security_score": 4,
+      "security_reasoning": "Security score is reduced only when authentication-related issues are detected.",
+      "instruction_adherence_score": 2,
+      "instruction_adherence_reasoning": "Detected failures indicate incomplete adherence to execution instructions.",
+      "plan_opt_score": 2,
+      "plan_opt_reasoning": "Detected failures indicate avoidable planning or execution inefficiencies.",
+      "overall": 2.5
+    }
+  ]
+}

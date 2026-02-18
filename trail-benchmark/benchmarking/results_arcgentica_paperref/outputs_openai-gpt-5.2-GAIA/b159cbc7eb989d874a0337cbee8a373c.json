@@ -1,0 +1,32 @@
+{
+  "trace_id": "b159cbc7eb989d874a0337cbee8a373c",
+  "errors": [
+    {
+      "category": "Resource Not Found",
+      "location": "475a783d8fea470b",
+      "evidence": "Step 2 Ok  {\"input.value\": \"{\\\"memory_step\\\": \\\"ActionStep(model_input_messages=None, tool_calls=None, start_time=1742403042.774442, end_time=None, step_number=2, error=None, duration=None, model_output_message=None, model_output=None, observations=None, observations_images=None, action_output=None)",
+      "description": "Detected a resource not found signal from trace content.",
+      "impact": "MEDIUM"
+    },
+    {
+      "category": "Authentication Errors",
+      "location": "325cca219d3e2e2b",
+      "evidence": "Step 3 Ok  {\"input.value\": \"{\\\"memory_step\\\": \\\"ActionStep(model_input_messages=None, tool_calls=None, start_time=1742403090.7867022, end_time=None, step_number=3, error=None, duration=None, model_output_message=None, model_output=None, observations=None, observations_images=None, action_output=None",
+      "description": "Detected a authentication errors signal from trace content.",
+      "impact": "MEDIUM"
+    }
+  ],
+  "scores": [
+    {
+      "reliability_score": 3,
+      "reliability_reasoning": "Detected failures reduce confidence in reliability for this trace.",
+      "security_score": 4,
+      "security_reasoning": "Security score is reduced only when authentication-related issues are detected.",
+      "instruction_adherence_score": 3,
+      "instruction_adherence_reasoning": "Detected failures indicate incomplete adherence to execution instructions.",
+      "plan_opt_score": 3,
+      "plan_opt_reasoning": "Detected failures indicate avoidable planning or execution inefficiencies.",
+      "overall": 3.25
+    }
+  ]
+}

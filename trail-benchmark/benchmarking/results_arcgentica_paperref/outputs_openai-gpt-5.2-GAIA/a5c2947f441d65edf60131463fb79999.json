@@ -1,0 +1,32 @@
+{
+  "trace_id": "a5c2947f441d65edf60131463fb79999",
+  "errors": [
+    {
+      "category": "Authentication Errors",
+      "location": "4c263e0689e3aa9a",
+      "evidence": "LiteLLMModel.__call__ Ok  {\"input.mime_type\": \"application/json\", \"input.value\": \"{\\\"messages\\\": [{\\\"role\\\": \\\"user\\\", \\\"content\\\": [{\\\"type\\\": \\\"text\\\", \\\"text\\\": \\\"Below I will present you a task.\\\\n\\\\nYou will now build a comprehensive preparatory survey of which facts we have at our disposal and",
+      "description": "Detected a authentication errors signal from trace content.",
+      "impact": "MEDIUM"
+    },
+    {
+      "category": "Resource Not Found",
+      "location": "a9aa02184bb510ac",
+      "evidence": "Step 1 Ok  {\"input.value\": \"{\\\"memory_step\\\": \\\"ActionStep(model_input_messages=None, tool_calls=None, start_time=1742402500.443229, end_time=None, step_number=1, error=None, duration=None, model_output_message=None, model_output=None, observations=None, observations_images=None, action_output=None)",
+      "description": "Detected a resource not found signal from trace content.",
+      "impact": "MEDIUM"
+    }
+  ],
+  "scores": [
+    {
+      "reliability_score": 3,
+      "reliability_reasoning": "Detected failures reduce confidence in reliability for this trace.",
+      "security_score": 4,
+      "security_reasoning": "Security score is reduced only when authentication-related issues are detected.",
+      "instruction_adherence_score": 3,
+      "instruction_adherence_reasoning": "Detected failures indicate incomplete adherence to execution instructions.",
+      "plan_opt_score": 3,
+      "plan_opt_reasoning": "Detected failures indicate avoidable planning or execution inefficiencies.",
+      "overall": 3.25
+    }
+  ]
+}

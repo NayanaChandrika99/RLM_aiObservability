@@ -1,0 +1,116 @@
+{
+  "trace_id": "b1f9b9baefa4c69d1d848e35c130e29d",
+  "errors": [
+    {
+      "category": "Tool Selection Errors",
+      "location": "0594fb373eeade60",
+      "evidence": "Your url='https://www.benjerry.com/flavors' was not archived on Wayback Machine, try a different url. You should only use this tool with a correct input.",
+      "description": "find_archived_url invoked with an incorrect or invalid URL input, causing the tool to fail.",
+      "impact": "MEDIUM"
+    },
+    {
+      "category": "Resource Not Found",
+      "location": "08997671011e7a27",
+      "evidence": "Your url='https://www.benjerry.com/flavors/flavor-graveyard' was not archived on Wayback Machine, try a different url.",
+      "description": "Archive search failed because the requested URL has no Wayback Machine snapshot for the given date.",
+      "impact": "HIGH"
+    },
+    {
+      "category": "Tool Definition Issues",
+      "location": "40c41830c2a881ef",
+      "evidence": "TypeError: PageDownTool.forward() got an unexpected keyword argument 'query'",
+      "description": "page_down (PageDownTool) was invoked with an unexpected 'query' argument, causing an AgentExecutionError and preventing page navigation.",
+      "impact": "HIGH"
+    },
+    {
+      "category": "Resource Not Found",
+      "location": "6412e62f2c9c42c3",
+      "evidence": "Your url='https://www.benjerry.com/flavors/flavor-graveyard' was not archived on Wayback Machine, try a different url.",
+      "description": "Archive search failed because the requested URL has no Wayback Machine snapshot for the given date.",
+      "impact": "HIGH"
+    },
+    {
+      "category": "Poor Information Retrieval",
+      "location": "713dd77a3f2afe21",
+      "evidence": "Exception: No results found for query: 'Ben & Jerry's online flavor graveyard end of 2022 oldest flavor headstone inscription photo oldest flavor headstone inscription last line rhyme'.",
+      "description": "Search tool returned no results for an overly specific query.",
+      "impact": "MEDIUM"
+    },
+    {
+      "category": "Resource Not Found",
+      "location": "797e9814dfc62698",
+      "evidence": "Your url='https://www.benjerry.com/flavor-graveyard' was not archived on Wayback Machine, try a different url.",
+      "description": "Requested URL not archived in the Wayback Machine; primary archived page unavailable.",
+      "impact": "HIGH"
+    },
+    {
+      "category": "Resource Not Found",
+      "location": "9a9289c15d6fd9c9",
+      "evidence": "Your url='https://www.benjerry.com/flavors/flavor-graveyard' was not archived on Wayback Machine, try a different url.",
+      "description": "Archive search failed because the requested URL has no Wayback Machine snapshot for the given date.",
+      "impact": "HIGH"
+    },
+    {
+      "category": "Poor Information Retrieval",
+      "location": "b336653fcbbba7fb",
+      "evidence": "Despite extensive attempts to locate the original archived image, secondary sources confirm that the last line of the rhyme on the oldest flavor\u2019s headstone in the Ben & Jerry\u2019s online flavor graveyard was 'Rest In Cream.'",
+      "description": "Agent reported a definitive inscription based on secondary sources after failing to locate the primary archived image.",
+      "impact": "HIGH"
+    },
+    {
+      "category": "Resource Not Found",
+      "location": "b965ceeed2154e65",
+      "evidence": "Your url='https://www.benjerry.com/flavors/flavor-graveyard' was not archived on Wayback Machine, try a different url.",
+      "description": "Archive search failed because the requested URL has no Wayback Machine snapshot for the given date.",
+      "impact": "HIGH"
+    },
+    {
+      "category": "Poor Information Retrieval",
+      "location": "bd837d5c2393d5c7",
+      "evidence": "The search string 'headstone' was not found on this page.",
+      "description": "find-on-page returned no matches for 'headstone', indicating the agent failed to locate the target text on the page.",
+      "impact": "MEDIUM"
+    },
+    {
+      "category": "Poor Information Retrieval",
+      "location": "c5a62e3ff2bb7bb3",
+      "evidence": "Exception: No results found for query: 'Ben & Jerry's online flavor graveyard end of 2022 oldest flavor headstone inscription photo oldest flavor headstone inscription last line rhyme'.",
+      "description": "Search tool returned no results for an overly specific query.",
+      "impact": "MEDIUM"
+    },
+    {
+      "category": "Tool Definition Issues",
+      "location": "d78e9dab5a5edf03",
+      "evidence": "PageDownTool Error TypeError: PageDownTool.forward() got an unexpected keyword argument 'query'",
+      "description": "Tool was invoked with an unsupported 'query' keyword argument causing a TypeError.",
+      "impact": "MEDIUM"
+    },
+    {
+      "category": "Instruction Non-compliance",
+      "location": "e9b90082f5b8677e",
+      "evidence": "It is not permitted to evaluate other functions than the provided tools or functions defined/imported in previous code (tried to execute web_search).",
+      "description": "Agent attempted to execute a non-provided function ('web_search'), violating execution constraints.",
+      "impact": "MEDIUM"
+    },
+    {
+      "category": "Resource Not Found",
+      "location": "f23ee1844b420e41",
+      "evidence": "Your url='https://www.benjerry.com/flavor-graveyard' was not archived on Wayback Machine, try a different url.",
+      "description": "Archive search failed because the requested URL has no Wayback Machine snapshot for the given date.",
+      "impact": "HIGH"
+    }
+  ],
+  "scores": [
+    {
+      "reliability_score": 1,
+      "reliability_reasoning": "Detected failures reduce confidence in reliability for this trace.",
+      "security_score": 5,
+      "security_reasoning": "Security score is reduced only when authentication-related issues are detected.",
+      "instruction_adherence_score": 1,
+      "instruction_adherence_reasoning": "Detected failures indicate incomplete adherence to execution instructions.",
+      "plan_opt_score": 1,
+      "plan_opt_reasoning": "Detected failures indicate avoidable planning or execution inefficiencies.",
+      "overall": 2.0
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "subset_id": "dev18",
+  "description": "18 representative GAIA traces covering all 21 TRAIL categories (easy/medium/hard mix)",
+  "trace_ids": [
+    "0035f455b3ff2295167a844f04d85d34",
+    "0140b3f657eddf76ca82f72c49ac8e58",
+    "0adc4f3b99d9564d32811e913cc9d248",
+    "18efa24e637b9423f34180d1f2041d3e",
+    "27a6c5ebc3311542156fdde857a0035f",
+    "3205fa0cb2135fe671bf7cd0e5a26151",
+    "3637c5845140adbf29c565923c20e94d",
+    "396b6aa1ab86eb2e20d27582eb5eebd9",
+    "41b597524173272503073a0799ac523c",
+    "59365b27641e501d105b0e8f5e7c5af7",
+    "672d36d8ecc4816738433c75136eb99d",
+    "6e64c2e543327a7c2f2ce3d26ced94d1",
+    "72877db591837666d500b459fb3cf29d",
+    "7bf0addde339e4cac9dd3b772232a7e0",
+    "860f9d45f2e50bfecb190bb26eff1f32",
+    "876eb108c8650d4ada63a8d39aa1e96c",
+    "915d2c66879657f694f88e0ed6f02cf5",
+    "99f6b447779ba86b3cff2caede832d59"
+  ]
+}

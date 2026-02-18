@@ -1,0 +1,24 @@
+Weighted F1: 0.3333
+Average Location Accuracy: 0.1000
+Average Location-Category Joint Accuracy: 0.0000
+
+Score Correlations (Pearson r):
+--------------------------------------------------------------------------------
+Score Type                Correlation     p-value         N         
+--------------------------------------------------------------------------------
+reliability                        0.0000          1.0000 1         
+security                           0.0000          1.0000 1         
+instruction_adherence              0.0000          1.0000 1         
+plan_optimization                  0.0000          1.0000 1         
+overall                            0.0000          1.0000 1         
+
+Per-Category Statistics:
+--------------------------------------------------------------------------------
+Category                                 Precision  Recall     F1         Support   
+--------------------------------------------------------------------------------
+Poor Information Retrieval               1.0000     1.0000     1.0000     1         
+Formatting Errors                        0.0000     0.0000     0.0000     1         
+Instruction Non-compliance               0.0000     0.0000     0.0000     1         
+Resource Not Found                       1.0000     1.0000     1.0000     1         
+Context Handling Failures                0.0000     0.0000     0.0000     1         
+Resource Abuse                           0.0000     0.0000     0.0000     1         

@@ -1,0 +1,17 @@
+from os import getenv
+
+DEFAULT_ENDPOINT_URL = (
+    getenv("INFERENCE_ENDPOINT_URL") or "https://openrouter.ai/api/v1/chat/completions"
+)
+DEFAULT_LOG_POSTER_URL = "http://localhost:23456/logs"
+DEFAULT_INFERENCE_TOKEN = (
+    getenv("DEFAULT_INFERENCE_TOKEN") or getenv("OPENROUTER_API_KEY") or "open_sesame"
+)
+DEFAULT_PORT = 2345
+DEFAULT_MAX_CONCURRENT_INVOCATIONS = None
+DEFAULT_OTEL_ENDPOINT = getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+DEFAULT_DISABLE_OTEL = getenv("DISABLE_OTEL", '0') == '1'
+ORGANIZATION_ID = getenv("ORGANIZATION_ID", "")
+
+DEFAULT_SANDBOX_LOG_PATH = getenv("SANDBOX_LOG_PATH")
+DEFAULT_SANDBOX_LOG_TAGS = getenv("SANDBOX_LOG_TAGS")

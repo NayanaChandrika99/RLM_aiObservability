@@ -1,0 +1,25 @@
+{
+  "trace_id": "6d5b91f06e5a7377d4798be65fe46e97",
+  "errors": [
+    {
+      "category": "Resource Not Found",
+      "location": "6c88e735008057bb",
+      "evidence": "Step 1 Error AgentParsingError: Error in code parsing:\nYour code snippet is invalid, because the regex pattern ```(?:py|python)?\\n(.*?)\\n``` was not found in it.\nHere is your code snippet:\nThinking through the problem, we must \u201cread\u201d the ancient numeral correctly. I\u2019ll explain the reasoning and the ",
+      "description": "Detected a resource not found signal from trace content.",
+      "impact": "MEDIUM"
+    }
+  ],
+  "scores": [
+    {
+      "reliability_score": 4,
+      "reliability_reasoning": "Detected failures reduce confidence in reliability for this trace.",
+      "security_score": 5,
+      "security_reasoning": "Security score is reduced only when authentication-related issues are detected.",
+      "instruction_adherence_score": 4,
+      "instruction_adherence_reasoning": "Detected failures indicate incomplete adherence to execution instructions.",
+      "plan_opt_score": 4,
+      "plan_opt_reasoning": "Detected failures indicate avoidable planning or execution inefficiencies.",
+      "overall": 4.25
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+#!/usr/bin/env node
+
+import {
+  createAuthCommand,
+  createDatasetCommand,
+  createDatasetsCommand,
+  createExperimentCommand,
+  createExperimentsCommand,
+  createProjectsCommand,
+  createPromptCommand,
+  createPromptsCommand,
+  createTraceCommand,
+  createTracesCommand,
+} from "./commands";
+
+import { Command } from "commander";
+
+// Phoenix CLI Main Logic
+export function main() {
+  const program = new Command();
+
+  program
+    .name("px")
+    .description("Phoenix CLI - AI observability from the command line")
+    .version("0.0.4");
+
+  // Register commands
+  program.addCommand(createAuthCommand());
+  program.addCommand(createProjectsCommand());
+  program.addCommand(createTracesCommand());
+  program.addCommand(createTraceCommand());
+  program.addCommand(createDatasetsCommand());
+  program.addCommand(createDatasetCommand());
+  program.addCommand(createExperimentsCommand());
+  program.addCommand(createExperimentCommand());
+  program.addCommand(createPromptsCommand());
+  program.addCommand(createPromptCommand());
+
+  // Show help if no command provided
+  if (process.argv.length === 2) {
+    program.help();
+  }
+
+  program.parse();
+}

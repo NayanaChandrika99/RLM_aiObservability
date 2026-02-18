@@ -1,0 +1,9 @@
+line-length = 100
+target-version = "py313"
+
+[format]
+exclude = ["src/development/**"]
+quote-style = "preserve"
+
+[lint]
+select = ["I", "F401"]
