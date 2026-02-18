@@ -6,8 +6,8 @@ Recursive Language Model runtime for AI observability investigations on agent tr
 
 | Reference | Score |
 | --- | --- |
-| [TRAIL paper](https://arxiv.org/abs/2505.12056) ([local PDF](trail-benchmark/TRAIL.pdf)) | `0.183` |
-| [AgentCompass paper](https://arxiv.org/abs/2508.18144) ([local PDF](AgentCompass.pdf)) | `0.239` |
+| [TRAIL paper](https://arxiv.org/pdf/2505.08638) | `0.183` |
+| [AgentCompass paper](https://arxiv.org/pdf/2509.14647) | `0.239` |
 | This repo (full-GAIA live campaign mean) | `0.2427` |
 
 ## What This Means For Autonomous Error Tracing
