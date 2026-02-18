@@ -8,6 +8,18 @@ This project automates long-context investigation workflows on AI traces, with t
 
 It is designed to run on top of Arize Phoenix or a compatible trace/data platform through a read-only inspection interface.
 
+## TRAIL Benchmark Status
+
+This repo has now crossed the two key published TRAIL references on the GAIA split (joint accuracy):
+- [TRAIL: Taxonomy of Errors in Agentic AI Systems](https://arxiv.org/abs/2505.12056) (local copy: [TRAIL.pdf](trail-benchmark/TRAIL.pdf)) reports a best published GAIA joint reference of `0.183`.
+- [AgentCompass](https://arxiv.org/abs/2508.18144) (local copy: [AgentCompass.pdf](AgentCompass.pdf)) reports `0.239` GAIA joint.
+- Our full-GAIA live campaign reached `0.2427` mean joint accuracy.
+
+What this means for autonomous error tracing in agentic runs:
+- The system can automatically trace multi-step agent trajectories and isolate where failures happened.
+- It jointly identifies error category and location, not just a final-answer failure label.
+- Outputs remain evidence-linked (`trace_id`, `span_id`, `artifact_id`) so findings are auditable and reproducible.
+
 ## Why This Exists
 
 AI observability incidents are usually not a single error line. Evidence is spread across:
@@ -53,14 +65,12 @@ All findings are evidence-linked (`trace_id`, `span_id`, `artifact_id`) and repr
 
 ## Proof Snapshot (Current Evidence)
 
-Evidence files in this repo:
-- `artifacts/proof_runs/phase10-rca-only-canary-5-retrieverfix-20260211T021018Z/rca_only_report.json`
-- `artifacts/proof_runs/phase10-compliance-only-canary-5-20260211T023031Z/compliance_only_report.json`
-
 Measured on 5-trace canaries:
 - RCA: baseline accuracy `0.0` -> RLM `0.8` (delta `+0.8`), succeeded `5/5`, wall-time partials `0`
 - Compliance: baseline accuracy `0.8` -> RLM `1.0` (delta `+0.2`), succeeded `5/5`, partial rate `0`, failed `0`
 - Approximate per-trace cost: RCA `~$0.0043`, Compliance `~$0.0094`
+
+Note: generated run outputs are intentionally gitignored; keep benchmark summaries in committed docs and memory logs.
 
 ## Repository Layout
 
@@ -145,4 +155,3 @@ Primary scale-up path:
 - richer trace/log/metric connectors
 - tighter benchmark gates by domain
 - gradual rollout with budget policies and human review routing for low-confidence/high-severity runs
-
